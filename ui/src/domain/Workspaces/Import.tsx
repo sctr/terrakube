@@ -279,6 +279,14 @@ export const ImportWorkspace = () => {
 
   const importWorkspace = async (workspace: any) => {
     try {
+      const workingDirectory = workspace.attributes["working-directory"];
+      const trimmedWorkingDirectory = workingDirectory?.trim();
+      let folder = "/";
+
+      if (trimmedWorkingDirectory != null && trimmedWorkingDirectory !== "") {
+        folder = trimmedWorkingDirectory;
+      }
+
       const response = await axiosInstance.post(
         `${new URL(window._env_.REACT_APP_TERRAKUBE_API_URL).origin}/importer/tfcloud/workspaces`,
         {
@@ -287,7 +295,7 @@ export const ImportWorkspace = () => {
           id: workspace.id,
           organization: form.getFieldValue("organization"),
           branch: workspace.attributes["vcs-repo"]?.branch,
-          folder: workspace.attributes["vcs-repo"]?.directory,
+          folder,
           name: workspace.attributes.name,
           terraformVersion: workspace.attributes["terraform-version"],
           source: workspace.attributes["vcs-repo"]?.["repository-http-url"],

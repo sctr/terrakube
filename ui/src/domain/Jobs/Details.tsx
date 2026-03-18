@@ -484,7 +484,7 @@ export const DetailsJob = ({ jobId }: Props) => {
               <Collapse
                 key={item.id}
                 style={{ width: "100%" }}
-                defaultActiveKey={item.status === "running" ? ["2"] : []}
+                defaultActiveKey={["2"]}
                 items={[
                   {
                     key: "2",

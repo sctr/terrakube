@@ -67,4 +67,51 @@ describe("StructuredPlanOutput", () => {
     expect(screen.getByText(/unchanged attribute/i)).toBeInTheDocument();
     expect(screen.queryByText('"after"')).not.toBeInTheDocument();
   });
+
+  it("expands array items so useful child fields are visible", () => {
+    render(
+      <StructuredPlanOutput
+        changes={[
+          {
+            address: "railway_variable_collection.img",
+            action: "update",
+            actions: ["update"],
+            before: {
+              variables: [
+                {
+                  name: "CONSUMER_COUNT",
+                  value: "1",
+                },
+                {
+                  name: "UNCHANGED",
+                  value: "same",
+                },
+              ],
+            },
+            after: {
+              variables: [
+                {
+                  name: "CONSUMER_COUNT",
+                  value: "2",
+                },
+                {
+                  name: "UNCHANGED",
+                  value: "same",
+                },
+              ],
+            },
+          },
+        ]}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /railway_variable_collection\.img/i }));
+
+    expect(screen.getByText("variables")).toBeInTheDocument();
+    expect(screen.getByText("[0] CONSUMER_COUNT")).toBeInTheDocument();
+    expect(screen.queryByText('"CONSUMER_COUNT"')).not.toBeInTheDocument();
+    expect(screen.getByText('"1"')).toBeInTheDocument();
+    expect(screen.getByText('"2"')).toBeInTheDocument();
+    expect(screen.getAllByText(/unchanged attribute/i).length).toBeGreaterThan(0);
+  });
 });

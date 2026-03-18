@@ -124,6 +124,14 @@ const isPrimitiveValue = (value: unknown) => {
   return false;
 };
 
+const isCollectionValue = (value: unknown) => {
+  if (Array.isArray(value)) {
+    return true;
+  }
+
+  return isRecord(value);
+};
+
 const areValuesEqual = (left: unknown, right: unknown) => {
   if (left === right) {
     return true;
@@ -266,6 +274,33 @@ const countVisibleLeaves = (rows: DiffRow[]) => {
   }, 0);
 };
 
+const getCollectionItemLabel = (before: unknown, after: unknown, index: number) => {
+  const baseLabel = `[${index}]`;
+  const candidate = isRecord(after) ? after : isRecord(before) ? before : null;
+
+  if (!candidate) {
+    return baseLabel;
+  }
+
+  const identityKeys = ["name", "id", "key", "address", "resourceName", "resourceType"];
+
+  for (const identityKey of identityKeys) {
+    const rawValue = candidate[identityKey];
+
+    if (typeof rawValue !== "string") {
+      continue;
+    }
+
+    if (rawValue.trim().length === 0) {
+      continue;
+    }
+
+    return `${baseLabel} ${rawValue}`;
+  }
+
+  return baseLabel;
+};
+
 const buildDiffRows = (
   before: unknown,
   after: unknown,
@@ -307,8 +342,56 @@ const buildDiffRows = (
     };
   }
 
-  const treatAsLeaf =
-    isPrimitiveValue(before) || isPrimitiveValue(after) || Array.isArray(before) || Array.isArray(after);
+  if (Array.isArray(before) || Array.isArray(after)) {
+    const beforeArray = Array.isArray(before) ? before : [];
+    const afterArray = Array.isArray(after) ? after : [];
+    const unknownArray = Array.isArray(afterUnknown) ? afterUnknown : [];
+    const beforeSensitiveArray = Array.isArray(beforeSensitive) ? beforeSensitive : [];
+    const afterSensitiveArray = Array.isArray(afterSensitive) ? afterSensitive : [];
+
+    const rows: DiffRow[] = [];
+    let hiddenCount = 0;
+    const maxLength = Math.max(beforeArray.length, afterArray.length);
+
+    for (let index = 0; index < maxLength; index += 1) {
+      const itemLabel = `[${index}]`;
+      const itemDisplayLabel = getCollectionItemLabel(beforeArray[index], afterArray[index], index);
+      const childDiff = buildDiffRows(
+        beforeArray[index],
+        afterArray[index],
+        unknownArray[index],
+        beforeSensitiveArray[index],
+        afterSensitiveArray[index],
+        itemLabel
+      );
+
+      hiddenCount += childDiff.hiddenCount;
+
+      if (childDiff.rows.length === 0) {
+        continue;
+      }
+
+      if (childDiff.rows.length === 1 && !childDiff.rows[0].children?.length && childDiff.rows[0].label === itemLabel) {
+        rows.push(childDiff.rows[0]);
+        continue;
+      }
+
+      rows.push({
+        key: itemLabel,
+        label: itemDisplayLabel,
+        kind: "group",
+        children: childDiff.rows,
+        hiddenCount: childDiff.hiddenCount,
+      });
+    }
+
+    return {
+      rows,
+      hiddenCount,
+    };
+  }
+
+  const treatAsLeaf = isPrimitiveValue(before) || isPrimitiveValue(after);
   if (treatAsLeaf) {
     if (areValuesEqual(before, after)) {
       return {
@@ -364,7 +447,13 @@ const buildDiffRows = (
       return;
     }
 
-    if (childDiff.rows.length === 1 && !childDiff.rows[0].children?.length && childDiff.rows[0].label === key) {
+    if (
+      childDiff.rows.length === 1 &&
+      !childDiff.rows[0].children?.length &&
+      childDiff.rows[0].label === key &&
+      !isCollectionValue(beforeRecord[key]) &&
+      !isCollectionValue(afterRecord[key])
+    ) {
       rows.push(childDiff.rows[0]);
       return;
     }

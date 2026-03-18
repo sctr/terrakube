@@ -193,7 +193,7 @@ jobs:
           docker commit --change='ENTRYPOINT ["/cnb/process/web"]' --change='USER cnb' "$(docker ps -lq)" executortemp
 
           EXECUTOR_IMAGE_ID="$(docker images executortemp -q)"
-          docker tag "${EXECUTOR_IMAGE_ID}" ${REGISTRY}/${OWNER_LC}/executor:${VERSION}
-          docker tag "${EXECUTOR_IMAGE_ID}" ${REGISTRY}/${OWNER_LC}/executor:latest
-          docker push ${REGISTRY}/${OWNER_LC}/executor:${VERSION}
-          docker push ${REGISTRY}/${OWNER_LC}/executor:latest
+          docker tag "${EXECUTOR_IMAGE_ID}" ${REGISTRY}/${OWNER_LC}/${{ matrix.image_name }}:${VERSION}
+          docker tag "${EXECUTOR_IMAGE_ID}" ${REGISTRY}/${OWNER_LC}/${{ matrix.image_name }}:latest
+          docker push ${REGISTRY}/${OWNER_LC}/${{ matrix.image_name }}:${VERSION}
+          docker push ${REGISTRY}/${OWNER_LC}/${{ matrix.image_name }}:latest

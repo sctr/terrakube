@@ -29,6 +29,7 @@ type Props = {
 };
 
 const TERMINAL_JOB_STATUSES = new Set(["completed", "noChanges", "failed", "cancelled", "rejected", "notExecuted"]);
+const CLOSED_BY_DEFAULT_STEP_NAMES = new Set(["manual approval pending", "apply pending"]);
 
 export const DetailsJob = ({ jobId }: Props) => {
   const organizationId = sessionStorage.getItem(ORGANIZATION_ARCHIVE);
@@ -58,6 +59,17 @@ export const DetailsJob = ({ jobId }: Props) => {
     }
 
     return TERMINAL_JOB_STATUSES.has(status);
+  };
+
+  const shouldStepBeExpandedByDefault = (item: JobStep) => {
+    const normalizedName = item.name.trim().toLowerCase();
+    const isApprovalPendingStep = CLOSED_BY_DEFAULT_STEP_NAMES.has(normalizedName);
+
+    if (!isApprovalPendingStep) {
+      return true;
+    }
+
+    return item.status !== "waitingApproval" && item.status !== "notExecuted" && item.status !== "pending";
   };
 
   const outputLog = async (output: string | undefined, status: string, signal: AbortSignal) => {
@@ -484,9 +496,9 @@ export const DetailsJob = ({ jobId }: Props) => {
           {steps.length > 0 ? (
             steps.map((item) => (
               <Collapse
-                key={item.id}
+                key={`${item.id}-${item.status}`}
                 style={{ width: "100%" }}
-                defaultActiveKey={["2"]}
+                defaultActiveKey={shouldStepBeExpandedByDefault(item) ? ["2"] : []}
                 items={[
                   {
                     key: "2",

@@ -20,6 +20,7 @@ import axiosInstance, { axiosClient } from "../../config/axiosConfig";
 import { useAbortController, usePolling } from "../../hooks";
 import { Job, JobStep } from "../types";
 import { TerminalOutput } from "./TerminalOutput";
+import { getJobOutputRequestUrl, getPublicApiOrigin, isTerrakubeApiUrl } from "./outputUrl";
 import { StructuredPlanOutput } from "./StructuredPlanOutput";
 import { StructuredPlanOutputByStep, normalizeStructuredPlanOutput, normalizeUITemplates } from "./structuredPlan";
 
@@ -61,14 +62,15 @@ export const DetailsJob = ({ jobId }: Props) => {
 
   const outputLog = async (output: string | undefined, status: string, signal: AbortSignal) => {
     if (output != null) {
-      const apiDomain = new URL(window._env_.REACT_APP_TERRAKUBE_API_URL).hostname;
+      const outputUrl = getJobOutputRequestUrl(output);
+
       try {
-        if (output.includes(apiDomain)) {
-          const response = await axiosInstance.get(output, { signal });
+        if (isTerrakubeApiUrl(outputUrl)) {
+          const response = await axiosInstance.get(outputUrl, { signal });
           return response.data;
         }
 
-        const response = await axiosClient.get(output, { signal });
+        const response = await axiosClient.get(outputUrl, { signal });
         return response.data;
       } catch {
         return "No logs available";
@@ -337,10 +339,10 @@ export const DetailsJob = ({ jobId }: Props) => {
   const loadContext = useCallback(async () => {
     const requestId = ++contextRequestRef.current;
     const signal = getContextSignal();
-    const api = new URL(window._env_.REACT_APP_TERRAKUBE_API_URL);
+    const apiOrigin = getPublicApiOrigin();
 
     try {
-      const response = await axiosInstance.get(`${api.protocol}//${api.host}/context/v1/${jobId}`, { signal });
+      const response = await axiosInstance.get(`${apiOrigin}/context/v1/${jobId}`, { signal });
       if (requestId !== contextRequestRef.current) {
         return;
       }

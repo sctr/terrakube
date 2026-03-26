@@ -5,13 +5,13 @@
 .structured-plan-shell {
   background: #ffffff;
   border: 1px solid #d8dde6;
-  border-radius: 12px;
+  border-radius: 8px;
   overflow: hidden;
 }
 
 .structured-plan-summaryArea {
   border-bottom: 1px solid #e7ebf0;
-  padding: 16px;
+  padding: 12px;
 }
 
 .structured-plan-summaryStrip {
@@ -22,16 +22,16 @@
 
 .structured-plan-summarySegment {
   align-items: center;
-  border-radius: 10px;
+  border-radius: 8px;
   color: #ffffff;
   display: flex;
   flex-basis: 0;
   flex-shrink: 1;
-  gap: 8px;
-  min-height: 44px;
-  min-width: 180px;
-  padding: 0 14px;
-  font-size: 14px;
+  gap: 6px;
+  min-height: 36px;
+  min-width: 148px;
+  padding: 0 12px;
+  font-size: 13px;
   font-weight: 600;
 }
 
@@ -51,9 +51,9 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 18px;
+  min-width: 16px;
   font-family: "SFMono-Regular", Consolas, Monaco, monospace;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -61,12 +61,12 @@
   align-items: center;
   background: #f8fafc;
   border: 1px solid #e7ebf0;
-  border-radius: 10px;
+  border-radius: 8px;
   color: #526171;
   display: flex;
-  min-height: 44px;
-  padding: 0 14px;
-  font-size: 14px;
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: 13px;
   font-weight: 600;
 }
 
@@ -74,9 +74,9 @@
   color: #526171;
   display: flex;
   flex-wrap: wrap;
-  gap: 16px;
-  margin-top: 10px;
-  font-size: 13px;
+  gap: 12px;
+  margin-top: 8px;
+  font-size: 12px;
 }
 
 .structured-plan-toolbar {
@@ -84,9 +84,9 @@
   border-bottom: 1px solid #e7ebf0;
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 10px;
   justify-content: space-between;
-  padding: 12px 16px;
+  padding: 10px 12px;
 }
 
 .structured-plan-toolbarControls {
@@ -94,17 +94,17 @@
   display: flex;
   flex: 1 1 360px;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
 }
 
 .structured-plan-searchInput {
   background: #ffffff;
   border: 1px solid #cfd6df;
-  border-radius: 8px;
+  border-radius: 6px;
   color: #1f2937;
-  font-size: 14px;
-  min-width: 240px;
-  padding: 8px 12px;
+  font-size: 13px;
+  min-width: 220px;
+  padding: 7px 10px;
 }
 
 .structured-plan-searchInput:focus {
@@ -117,13 +117,13 @@
   align-items: center;
   background: #ffffff;
   border: 1px solid #cfd6df;
-  border-radius: 8px;
+  border-radius: 6px;
   color: #526171;
   cursor: pointer;
   display: inline-flex;
-  gap: 8px;
-  min-height: 38px;
-  padding: 0 10px;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 8px;
 }
 
 .structured-plan-selectWrap:focus-within {
@@ -134,7 +134,7 @@
 .structured-plan-selectIcon,
 .structured-plan-selectChevron {
   color: #6b7280;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .structured-plan-select {
@@ -143,8 +143,8 @@
   border: none;
   color: #1f2937;
   cursor: pointer;
-  font-size: 14px;
-  min-width: 150px;
+  font-size: 13px;
+  min-width: 138px;
   padding-right: 4px;
 }
 
@@ -157,8 +157,8 @@
   color: #374151;
   cursor: pointer;
   display: inline-flex;
-  gap: 8px;
-  font-size: 14px;
+  gap: 6px;
+  font-size: 13px;
   line-height: 1.4;
 }
 
@@ -171,22 +171,22 @@
   color: #526171;
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 10px;
   justify-content: flex-end;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .structured-plan-toolbarButton {
   align-items: center;
   background: #ffffff;
   border: 1px solid #cfd6df;
-  border-radius: 8px;
+  border-radius: 6px;
   color: #1f2937;
   cursor: pointer;
   display: inline-flex;
-  gap: 8px;
-  min-height: 34px;
-  padding: 0 12px;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 10px;
 }
 
 .structured-plan-toolbarButton:hover {
@@ -223,9 +223,9 @@
   cursor: pointer;
   display: flex;
   flex: 1 1 auto;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
-  padding: 12px 16px;
+  padding: 9px 12px;
   text-align: left;
 }
 
@@ -255,16 +255,16 @@
 .structured-plan-actionIcon {
   align-items: center;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: 5px;
   display: inline-flex;
   flex-shrink: 0;
   font-family: "SFMono-Regular", Consolas, Monaco, monospace;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
-  height: 24px;
+  height: 20px;
   justify-content: center;
   letter-spacing: -0.02em;
-  width: 24px;
+  width: 20px;
 }
 
 .structured-plan-actionIcon--create {
@@ -302,26 +302,26 @@
   align-items: center;
   background: #f4f6f9;
   border: 1px solid #dce3eb;
-  border-radius: 6px;
+  border-radius: 5px;
   color: #354052;
   display: inline-flex;
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
-  height: 24px;
+  height: 20px;
   justify-content: center;
   text-transform: uppercase;
-  width: 24px;
+  width: 20px;
 }
 
 .structured-plan-providerBadgeIcon {
-  font-size: 13px;
+  font-size: 11px;
 }
 
 .structured-plan-address {
   color: #1d2433;
   flex: 1 1 auto;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   min-width: 0;
   overflow: hidden;
@@ -337,7 +337,7 @@
   color: #6b7280;
   cursor: pointer;
   display: inline-flex;
-  flex: 0 0 44px;
+  flex: 0 0 38px;
   justify-content: center;
 }
 
@@ -354,28 +354,28 @@
 
 .structured-plan-rowBody {
   background: #ffffff;
-  padding: 0 16px 16px 60px;
+  padding: 0 12px 12px 50px;
 }
 
 .structured-plan-rowBodyInner {
   border-left: 2px solid #e7ebf0;
-  padding-left: 16px;
+  padding-left: 12px;
 }
 
 .structured-plan-rowMeta {
   align-items: flex-start;
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 8px;
   justify-content: space-between;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
   padding-top: 2px;
 }
 
 .structured-plan-rowMetaTags {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .structured-plan-actionPill,
@@ -384,10 +384,10 @@
   border: 1px solid transparent;
   border-radius: 999px;
   display: inline-flex;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
-  min-height: 24px;
-  padding: 0 10px;
+  min-height: 20px;
+  padding: 0 8px;
 }
 
 .structured-plan-actionPill--create {
@@ -432,26 +432,26 @@
   color: #526171;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  font-size: 12px;
+  gap: 2px;
+  font-size: 11px;
   text-align: right;
 }
 
 .structured-plan-diffList {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .structured-plan-diffGroup {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .structured-plan-diffGroupLabel {
   color: #253041;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
 }
 
@@ -459,25 +459,25 @@
   border-left: 1px solid #e5e7eb;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-left: 12px;
-  padding-left: 12px;
+  gap: 6px;
+  margin-left: 10px;
+  padding-left: 10px;
 }
 
 .structured-plan-hiddenCount {
   color: #7a8492;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .structured-plan-diffRow {
   align-items: flex-start;
   background: #fcfdff;
   border: 1px solid #edf1f6;
-  border-radius: 8px;
+  border-radius: 6px;
   display: grid;
-  gap: 12px;
-  grid-template-columns: minmax(180px, 260px) minmax(0, 1fr);
-  padding: 10px 12px;
+  gap: 10px;
+  grid-template-columns: minmax(160px, 220px) minmax(0, 1fr);
+  padding: 8px 10px;
 }
 
 .structured-plan-diffRow--added {
@@ -520,11 +520,11 @@
   display: inline-flex;
   flex-shrink: 0;
   font-family: "SFMono-Regular", Consolas, Monaco, monospace;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
-  height: 20px;
+  height: 18px;
   justify-content: center;
-  width: 20px;
+  width: 18px;
 }
 
 .structured-plan-diffMarker--added {
@@ -556,7 +556,7 @@
   align-items: center;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
 }
 
@@ -564,14 +564,14 @@
   align-items: center;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
 }
 
 .structured-plan-diffArrow {
   color: #6b7280;
   font-family: "SFMono-Regular", Consolas, Monaco, monospace;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -579,15 +579,15 @@
   align-items: center;
   background: #ffffff;
   border: 1px solid #d8dde6;
-  border-radius: 6px;
+  border-radius: 5px;
   color: #1f2937;
   display: inline-flex;
   font-family: "SFMono-Regular", Consolas, Monaco, monospace;
-  font-size: 12px;
+  font-size: 11px;
   max-width: 100%;
-  min-height: 28px;
+  min-height: 24px;
   overflow: hidden;
-  padding: 0 8px;
+  padding: 0 6px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -618,7 +618,7 @@
 }
 
 .structured-plan-emptyState {
-  padding: 20px 16px;
+  padding: 16px 12px;
 }
 
 @media (max-width: 960px) {
@@ -639,7 +639,7 @@
   }
 
   .structured-plan-rowBody {
-    padding: 0 16px 16px 16px;
+    padding: 0 12px 12px 12px;
   }
 
   .structured-plan-diffRow {

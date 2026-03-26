@@ -136,7 +136,7 @@ export const DetailsJob = ({ jobId }: Props) => {
     let structuredContent = renderConsoleOutput(item);
 
     if (structuredChanges) {
-      structuredContent = <StructuredPlanOutput changes={structuredChanges} />;
+      structuredContent = <StructuredPlanOutput changes={structuredChanges} outputLog={item.outputLog} />;
     } else if (template) {
       structuredContent = <div>{parse(template)}</div>;
     }

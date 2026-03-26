@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { StructuredPlanOutput } from "../StructuredPlanOutput";
 
 describe("StructuredPlanOutput", () => {
@@ -27,14 +28,126 @@ describe("StructuredPlanOutput", () => {
       />
     );
 
+    expect(screen.getByText("1 to create")).toBeInTheDocument();
+    expect(screen.getByText("1 to destroy")).toBeInTheDocument();
+    expect(screen.getByText("Actions: 0 to invoke")).toBeInTheDocument();
+
     fireEvent.click(screen.getByRole("button", { name: /aws_instance\.example/i }));
 
-    expect(screen.getAllByText("replace").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("aws_instance.example").length).toBeGreaterThan(0);
-    expect(screen.getByText("1 to replace")).toBeInTheDocument();
+    expect(screen.getByText("replace")).toBeInTheDocument();
+    expect(screen.getByText("aws_instance.example")).toBeInTheDocument();
     expect(screen.getByText("instance_type")).toBeInTheDocument();
     expect(screen.getByText('"t3.small"')).toBeInTheDocument();
     expect(screen.getByText('"t3.medium"')).toBeInTheDocument();
+  });
+
+  it("filters rows by address", () => {
+    render(
+      <StructuredPlanOutput
+        changes={[
+          {
+            address: "aws_instance.example",
+            action: "update",
+            actions: ["update"],
+            before: {
+              instance_type: "t3.small",
+            },
+            after: {
+              instance_type: "t3.medium",
+            },
+          },
+          {
+            address: "railway_service.img",
+            action: "update",
+            actions: ["update"],
+            before: {
+              name: "img",
+            },
+            after: {
+              name: "img-api",
+            },
+          },
+        ]}
+      />
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("Filter resources by address..."), {
+      target: { value: "railway" },
+    });
+
+    expect(screen.queryByRole("button", { name: /aws_instance\.example/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /railway_service\.img/i })).toBeInTheDocument();
+  });
+
+  it("can show data sources when requested", () => {
+    render(
+      <StructuredPlanOutput
+        changes={[
+          {
+            address: "aws_instance.example",
+            action: "update",
+            actions: ["update"],
+            before: {
+              instance_type: "t3.small",
+            },
+            after: {
+              instance_type: "t3.medium",
+            },
+          },
+          {
+            address: "data.aws_caller_identity.current",
+            action: "read",
+            actions: ["read"],
+            before: {
+              account_id: "123456789012",
+            },
+            after: {
+              account_id: "123456789012",
+            },
+          },
+        ]}
+      />
+    );
+
+    expect(screen.queryByRole("button", { name: /data\.aws_caller_identity\.current/i })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText(/show data sources/i));
+
+    expect(screen.getByRole("button", { name: /data\.aws_caller_identity\.current/i })).toBeInTheDocument();
+  });
+
+  it("hides data sources on the initial render when managed resources are also present", () => {
+    const html = renderToStaticMarkup(
+      <StructuredPlanOutput
+        changes={[
+          {
+            address: "aws_instance.example",
+            action: "update",
+            actions: ["update"],
+            before: {
+              instance_type: "t3.small",
+            },
+            after: {
+              instance_type: "t3.medium",
+            },
+          },
+          {
+            address: "data.aws_caller_identity.current",
+            action: "read",
+            actions: ["read"],
+            before: {
+              account_id: "123456789012",
+            },
+            after: {
+              account_id: "123456789012",
+            },
+          },
+        ]}
+      />
+    );
+
+    expect(html).toContain("aws_instance.example");
+    expect(html).not.toContain("data.aws_caller_identity.current");
   });
 
   it("shows hidden unchanged attributes instead of dumping JSON", () => {

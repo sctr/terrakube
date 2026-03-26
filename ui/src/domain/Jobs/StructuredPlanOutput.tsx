@@ -1,20 +1,19 @@
-import {
-  ArrowRightOutlined,
-  DeleteOutlined,
-  EditOutlined,
-  PlusOutlined,
-  QuestionCircleOutlined,
-  SwapOutlined,
-} from "@ant-design/icons";
-import { Card, Collapse, Empty, Space, Tag, Typography } from "antd";
-import type { ReactNode } from "react";
-import { PlanChange, getPlanChangeActionColor, getPlanChangeActionLabel } from "./structuredPlan";
+import { CopyOutlined, DownloadOutlined, DownOutlined, FilterOutlined, RightOutlined } from "@ant-design/icons";
+import { Empty, message } from "antd";
+import type { ChangeEvent, ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { FaAws, FaDiscord, FaDocker, FaGithub, FaGitlab, FaGoogle, FaSlack } from "react-icons/fa6";
+import { stripAnsi } from "./stripAnsi";
+import { PlanChange, getPlanChangeActionLabel } from "./structuredPlan";
+import "./StructuredPlanOutput.css";
 
 type Props = {
   changes: PlanChange[];
+  outputLog?: string;
 };
 
-type ActionName = "create" | "update" | "replace" | "delete" | "read" | "unknown";
+type ActionName = "create" | "update" | "replace" | "delete" | "read" | "unknown" | "no-op";
+type ActionFilter = "all" | "create" | "update" | "replace" | "delete" | "read";
 
 type DiffRow = {
   key: string;
@@ -34,69 +33,102 @@ type CollectionEntry = {
   afterSensitive: unknown;
 };
 
-type ActionSummary = Record<ActionName, number>;
+type DiffResult = {
+  rows: DiffRow[];
+  hiddenCount: number;
+};
 
-const actionOrder: ActionName[] = ["create", "update", "replace", "delete", "read", "unknown"];
+type SummaryCounts = {
+  create: number;
+  update: number;
+  delete: number;
+  read: number;
+  unknown: number;
+};
+
+type PreparedChangeRow = {
+  key: string;
+  panelId: string;
+  change: PlanChange;
+  action: ActionName;
+  resourceLabel: string;
+  providerName: string;
+  providerLabel: string;
+  isDataSource: boolean;
+  diff: DiffResult;
+  visibleChanges: number;
+  hiddenCount: number;
+};
+
+type SummarySegment = {
+  key: "create" | "update" | "delete";
+  label: string;
+  count: number;
+  symbol: string;
+};
 
 const actionMeta: Record<
   ActionName,
   {
-    label: string;
-    title: string;
-    color: string;
-    icon: ReactNode;
-    accent: string;
-    background: string;
+    displayLabel: string;
+    filterLabel: string;
+    symbol: string;
+    className: string;
   }
 > = {
   create: {
-    label: "create",
-    title: "to create",
-    color: "green",
-    icon: <PlusOutlined />,
-    accent: "#389e0d",
-    background: "#f6ffed",
+    displayLabel: "create",
+    filterLabel: "Create",
+    symbol: "+",
+    className: "create",
   },
   update: {
-    label: "update",
-    title: "to change",
-    color: "blue",
-    icon: <EditOutlined />,
-    accent: "#1677ff",
-    background: "#f0f5ff",
+    displayLabel: "update",
+    filterLabel: "Change",
+    symbol: "~",
+    className: "update",
   },
   replace: {
-    label: "replace",
-    title: "to replace",
-    color: "orange",
-    icon: <SwapOutlined />,
-    accent: "#d46b08",
-    background: "#fff7e6",
+    displayLabel: "replace",
+    filterLabel: "Replace",
+    symbol: "-/+",
+    className: "replace",
   },
   delete: {
-    label: "delete",
-    title: "to destroy",
-    color: "red",
-    icon: <DeleteOutlined />,
-    accent: "#cf1322",
-    background: "#fff1f0",
+    displayLabel: "destroy",
+    filterLabel: "Destroy",
+    symbol: "-",
+    className: "delete",
   },
   read: {
-    label: "read",
-    title: "to read",
-    color: "default",
-    icon: <QuestionCircleOutlined />,
-    accent: "#595959",
-    background: "#fafafa",
+    displayLabel: "read",
+    filterLabel: "Read",
+    symbol: "?",
+    className: "read",
   },
   unknown: {
-    label: "unknown",
-    title: "unknown",
-    color: "default",
-    icon: <QuestionCircleOutlined />,
-    accent: "#595959",
-    background: "#fafafa",
+    displayLabel: "unknown",
+    filterLabel: "Unknown",
+    symbol: "?",
+    className: "unknown",
   },
+  "no-op": {
+    displayLabel: "no-op",
+    filterLabel: "No-op",
+    symbol: "=",
+    className: "unknown",
+  },
+};
+
+const providerIconMap = {
+  aws: FaAws,
+  google: FaGoogle,
+  "google-beta": FaGoogle,
+  docker: FaDocker,
+  github: FaGithub,
+  gitlab: FaGitlab,
+  slack: FaSlack,
+  discord: FaDiscord,
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
@@ -152,6 +184,14 @@ const areValuesEqual = (left: unknown, right: unknown) => {
   }
 };
 
+const getPluralSuffix = (count: number) => {
+  if (count === 1) {
+    return "";
+  }
+
+  return "s";
+};
+
 const getValuePreview = (value: unknown) => {
   if (value === undefined) {
     return "not set";
@@ -182,7 +222,7 @@ const getValuePreview = (value: unknown) => {
       return JSON.stringify(value);
     }
 
-    return `${value.length} item${value.length === 1 ? "" : "s"}`;
+    return `${value.length} item${getPluralSuffix(value.length)}`;
   }
 
   if (isRecord(value)) {
@@ -191,58 +231,17 @@ const getValuePreview = (value: unknown) => {
       return "{}";
     }
 
-    return `${keys.length} attribute${keys.length === 1 ? "" : "s"}`;
+    return `${keys.length} attribute${getPluralSuffix(keys.length)}`;
   }
 
   return String(value);
 };
 
-const getDiffTone = (kind: DiffRow["kind"]) => {
-  if (kind === "added") {
-    return {
-      textColor: "#135200",
-      background: "#f6ffed",
-      border: "#b7eb8f",
-    };
-  }
-
-  if (kind === "removed") {
-    return {
-      textColor: "#820014",
-      background: "#fff1f0",
-      border: "#ffccc7",
-    };
-  }
-
-  if (kind === "changed") {
-    return {
-      textColor: "#10239e",
-      background: "#f0f5ff",
-      border: "#adc6ff",
-    };
-  }
-
-  if (kind === "sensitive") {
-    return {
-      textColor: "#531dab",
-      background: "#f9f0ff",
-      border: "#d3adf7",
-    };
-  }
-
-  return {
-    textColor: "#ad6800",
-    background: "#fffbe6",
-    border: "#ffe58f",
-  };
-};
-
-const renderValueBadge = (
+const renderValueToken = (
   value: unknown,
-  kind: DiffRow["kind"],
+  kind: Exclude<DiffRow["kind"], "group">,
   options?: { sensitive?: boolean; unknown?: boolean }
 ) => {
-  const tone = getDiffTone(kind);
   let label = getValuePreview(value);
 
   if (options?.sensitive) {
@@ -253,23 +252,7 @@ const renderValueBadge = (
     label = "known after apply";
   }
 
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        padding: "4px 10px",
-        borderRadius: "999px",
-        fontFamily: "SFMono-Regular, Consolas, Monaco, monospace",
-        fontSize: 12,
-        color: tone.textColor,
-        background: tone.background,
-        border: `1px solid ${tone.border}`,
-      }}
-    >
-      {label}
-    </span>
-  );
+  return <span className={`structured-plan-valueToken structured-plan-valueToken--${kind}`}>{label}</span>;
 };
 
 const countVisibleLeaves = (rows: DiffRow[]): number => {
@@ -284,7 +267,13 @@ const countVisibleLeaves = (rows: DiffRow[]): number => {
 
 const getCollectionItemLabel = (before: unknown, after: unknown, index: number) => {
   const baseLabel = `[${index}]`;
-  const candidate = isRecord(after) ? after : isRecord(before) ? before : null;
+  let candidate: Record<string, unknown> | null = null;
+
+  if (isRecord(after)) {
+    candidate = after;
+  } else if (isRecord(before)) {
+    candidate = before;
+  }
 
   if (!candidate) {
     return baseLabel;
@@ -373,7 +362,7 @@ const buildDiffRows = (
   beforeSensitive: unknown,
   afterSensitive: unknown,
   label = "resource"
-): { rows: DiffRow[]; hiddenCount: number } => {
+): DiffResult => {
   const isSensitive = beforeSensitive === true || afterSensitive === true;
   const isUnknown = afterUnknown === true;
 
@@ -593,102 +582,229 @@ const buildDiffRows = (
   };
 };
 
-const renderDiffRows = (rows: DiffRow[], depth = 0): ReactNode => {
-  return rows.map((row) => {
-    const key = `${depth}-${row.key}`;
+const getDiffMarker = (kind: Exclude<DiffRow["kind"], "group">) => {
+  if (kind === "added") {
+    return "+";
+  }
+
+  if (kind === "removed") {
+    return "-";
+  }
+
+  if (kind === "unknown") {
+    return "?";
+  }
+
+  if (kind === "sensitive") {
+    return "*";
+  }
+
+  return "~";
+};
+
+const renderDiffRows = (rows: DiffRow[], parentKey = "root"): ReactNode => {
+  return rows.map((row, index) => {
+    const rowKey = `${parentKey}-${row.key}-${index}`;
 
     if (row.children?.length) {
       return (
-        <div
-          key={key}
-          style={{
-            marginTop: depth === 0 ? 0 : 10,
-            padding: "12px 14px",
-            border: "1px solid #f0f0f0",
-            borderRadius: 10,
-            background: "#ffffff",
-          }}
-        >
-          <div style={{ fontSize: 13, fontWeight: 600, color: "#262626", marginBottom: 10 }}>{row.label}</div>
-          <div style={{ paddingLeft: 12, borderLeft: "2px solid #f0f0f0" }}>
-            {renderDiffRows(row.children, depth + 1)}
-          </div>
+        <div key={rowKey} className="structured-plan-diffGroup">
+          <div className="structured-plan-diffGroupLabel">{row.label}</div>
+          <div className="structured-plan-diffGroupChildren">{renderDiffRows(row.children, rowKey)}</div>
           {row.hiddenCount ? (
-            <div style={{ marginTop: 10, fontSize: 12, color: "#8c8c8c" }}>
-              {row.hiddenCount} unchanged attribute{row.hiddenCount === 1 ? "" : "s"} hidden
+            <div className="structured-plan-hiddenCount">
+              {row.hiddenCount} unchanged attribute{getPluralSuffix(row.hiddenCount)} hidden
             </div>
           ) : null}
         </div>
       );
     }
 
-    const tone = getDiffTone(row.kind);
-    const showUnknown = row.kind === "unknown";
-    const showSensitive = row.kind === "sensitive";
+    const leafKind = row.kind as Exclude<DiffRow["kind"], "group">;
+    const marker = getDiffMarker(leafKind);
+    const showUnknown = leafKind === "unknown";
+    const showSensitive = leafKind === "sensitive";
 
-    let valueContent: ReactNode = renderValueBadge(row.after, row.kind);
+    let valueContent: ReactNode = renderValueToken(row.after, leafKind);
 
-    if (row.kind === "removed") {
-      valueContent = renderValueBadge(row.before, row.kind);
+    if (leafKind === "removed") {
+      valueContent = renderValueToken(row.before, leafKind);
     }
 
-    if (row.kind === "changed" || row.kind === "unknown" || row.kind === "sensitive") {
+    if (leafKind === "changed" || leafKind === "unknown" || leafKind === "sensitive") {
       valueContent = (
-        <Space size={8} wrap>
-          {renderValueBadge(row.before, row.kind, { sensitive: showSensitive })}
-          <ArrowRightOutlined style={{ color: "#8c8c8c" }} />
-          {renderValueBadge(row.after, row.kind, { sensitive: showSensitive, unknown: showUnknown })}
-        </Space>
+        <div className="structured-plan-diffValueFlow">
+          {renderValueToken(row.before, leafKind, { sensitive: showSensitive })}
+          <span className="structured-plan-diffArrow">=&gt;</span>
+          {renderValueToken(row.after, leafKind, {
+            sensitive: showSensitive,
+            unknown: showUnknown,
+          })}
+        </div>
       );
     }
 
     return (
-      <div
-        key={key}
-        style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(180px, 260px) 1fr",
-          gap: 12,
-          alignItems: "center",
-          padding: "10px 12px",
-          marginTop: depth === 0 ? 0 : 8,
-          borderRadius: 10,
-          background: tone.background,
-          border: `1px solid ${tone.border}`,
-        }}
-      >
-        <div style={{ fontSize: 13, fontWeight: 600, color: tone.textColor }}>{row.label}</div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>{valueContent}</div>
+      <div key={rowKey} className={`structured-plan-diffRow structured-plan-diffRow--${row.kind}`}>
+        <div className="structured-plan-diffLabel">
+          <span className={`structured-plan-diffMarker structured-plan-diffMarker--${row.kind}`}>{marker}</span>
+          <span>{row.label}</span>
+        </div>
+        <div className="structured-plan-diffValue">{valueContent}</div>
       </div>
     );
   });
 };
 
-const buildResourceDiff = (change: PlanChange) => {
-  const actionName = getPlanChangeActionLabel(change.actions, change.action) as ActionName;
+const normalizeActionName = (value: string): ActionName => {
+  if (
+    value === "create" ||
+    value === "update" ||
+    value === "replace" ||
+    value === "delete" ||
+    value === "read" ||
+    value === "unknown" ||
+    value === "no-op"
+  ) {
+    return value;
+  }
 
-  if (actionName === "create") {
+  return "unknown";
+};
+
+const getResourceAddress = (change: PlanChange) => {
+  if (change.address) {
+    return change.address;
+  }
+
+  if (change.resourceType && change.resourceName) {
+    return `${change.resourceType}.${change.resourceName}`;
+  }
+
+  if (change.resourceType) {
+    return change.resourceType;
+  }
+
+  if (change.resourceName) {
+    return change.resourceName;
+  }
+
+  return "resource";
+};
+
+const getProviderName = (change: PlanChange) => {
+  if (change.resourceType) {
+    const segments = change.resourceType.split("_");
+    if (segments[0] && segments[0].trim().length > 0) {
+      return segments[0];
+    }
+  }
+
+  const resourceLabel = getResourceAddress(change);
+  const normalizedLabel = resourceLabel.replace(/^data\./, "");
+  const segments = normalizedLabel.split(".");
+
+  for (const segment of segments) {
+    if (!segment.includes("_")) {
+      continue;
+    }
+
+    const resourceSegments = segment.split("_");
+    if (resourceSegments[0] && resourceSegments[0].trim().length > 0) {
+      return resourceSegments[0];
+    }
+  }
+
+  return "terraform";
+};
+
+const getProviderLabel = (providerName: string) => {
+  const normalizedProviderName = providerName.replace(/[^a-z0-9]+/gi, " ").trim();
+  const parts = normalizedProviderName.split(" ").filter((part) => part.length > 0);
+
+  if (parts.length >= 2) {
+    return parts
+      .map((part) => part[0].toUpperCase())
+      .join("")
+      .slice(0, 2);
+  }
+
+  const compactProviderName = providerName.replace(/[^a-z0-9]/gi, "");
+  if (compactProviderName.length >= 2) {
+    return compactProviderName.slice(0, 2).toUpperCase();
+  }
+
+  if (compactProviderName.length === 1) {
+    return compactProviderName.toUpperCase();
+  }
+
+  return "TF";
+};
+
+const isDataSourceChange = (change: PlanChange, action: ActionName) => {
+  if (action === "read") {
+    return true;
+  }
+
+  const resourceLabel = getResourceAddress(change);
+  if (resourceLabel.startsWith("data.")) {
+    return true;
+  }
+
+  if (resourceLabel.includes(".data.")) {
+    return true;
+  }
+
+  return false;
+};
+
+const buildResourceDiff = (change: PlanChange, action: ActionName) => {
+  if (action === "create") {
     return buildDiffRows(undefined, change.after, change.afterUnknown, undefined, change.afterSensitive);
   }
 
-  if (actionName === "delete") {
+  if (action === "delete") {
     return buildDiffRows(change.before, undefined, undefined, change.beforeSensitive, undefined);
   }
 
   return buildDiffRows(change.before, change.after, change.afterUnknown, change.beforeSensitive, change.afterSensitive);
 };
 
-const buildSummary = (changes: PlanChange[]): ActionSummary => {
-  return changes.reduce<ActionSummary>(
-    (summary, change) => {
-      const action = getPlanChangeActionLabel(change.actions, change.action) as ActionName;
-      summary[action] += 1;
+const buildSummary = (rows: PreparedChangeRow[]): SummaryCounts => {
+  return rows.reduce<SummaryCounts>(
+    (summary, row) => {
+      if (row.action === "replace") {
+        summary.create += 1;
+        summary.delete += 1;
+        return summary;
+      }
+
+      if (row.action === "create") {
+        summary.create += 1;
+        return summary;
+      }
+
+      if (row.action === "update") {
+        summary.update += 1;
+        return summary;
+      }
+
+      if (row.action === "delete") {
+        summary.delete += 1;
+        return summary;
+      }
+
+      if (row.action === "read") {
+        summary.read += 1;
+        return summary;
+      }
+
+      summary.unknown += 1;
       return summary;
     },
     {
       create: 0,
       update: 0,
-      replace: 0,
       delete: 0,
       read: 0,
       unknown: 0,
@@ -696,147 +812,435 @@ const buildSummary = (changes: PlanChange[]): ActionSummary => {
   );
 };
 
-export const StructuredPlanOutput = ({ changes }: Props) => {
+const buildSummarySegments = (summary: SummaryCounts): SummarySegment[] => {
+  const segments: SummarySegment[] = [];
+
+  if (summary.create > 0) {
+    segments.push({
+      key: "create",
+      label: `${summary.create} to create`,
+      count: summary.create,
+      symbol: "+",
+    });
+  }
+
+  if (summary.update > 0) {
+    segments.push({
+      key: "update",
+      label: `${summary.update} to change`,
+      count: summary.update,
+      symbol: "~",
+    });
+  }
+
+  if (summary.delete > 0) {
+    segments.push({
+      key: "delete",
+      label: `${summary.delete} to destroy`,
+      count: summary.delete,
+      symbol: "-",
+    });
+  }
+
+  return segments;
+};
+
+const formatResourceSummary = (summary: SummaryCounts) => {
+  const parts: string[] = [];
+
+  if (summary.create > 0) {
+    parts.push(`${summary.create} to create`);
+  }
+
+  if (summary.update > 0) {
+    parts.push(`${summary.update} to change`);
+  }
+
+  if (summary.delete > 0) {
+    parts.push(`${summary.delete} to destroy`);
+  }
+
+  if (parts.length === 0) {
+    return "No managed resource changes";
+  }
+
+  return parts.join(", ");
+};
+
+const extractTerraformVersion = (outputLog?: string) => {
+  if (!outputLog) {
+    return undefined;
+  }
+
+  const sanitizedOutput = stripAnsi(outputLog);
+  const match = sanitizedOutput.match(/Terraform v([^\s]+)/);
+  if (!match?.[1]) {
+    return undefined;
+  }
+
+  return `Terraform ${match[1]}`;
+};
+
+const matchesAddressFilter = (row: PreparedChangeRow, filterValue: string) => {
+  const normalizedFilterValue = filterValue.trim().toLowerCase();
+
+  if (normalizedFilterValue.length === 0) {
+    return true;
+  }
+
+  const searchParts = [row.resourceLabel, row.change.moduleAddress, row.change.resourceType, row.providerName];
+
+  return searchParts.some((part) => {
+    if (!part) {
+      return false;
+    }
+
+    return part.toLowerCase().includes(normalizedFilterValue);
+  });
+};
+
+export const StructuredPlanOutput = ({ changes, outputLog }: Props) => {
+  const [expandedRowKeys, setExpandedRowKeys] = useState<string[]>([]);
+  const [addressFilter, setAddressFilter] = useState("");
+  const [operationFilter, setOperationFilter] = useState<ActionFilter>("all");
+
+  const preparedRows = useMemo<PreparedChangeRow[]>(() => {
+    return changes.map((change, index) => {
+      const normalizedAction = normalizeActionName(getPlanChangeActionLabel(change.actions, change.action));
+      const resourceLabel = getResourceAddress(change);
+      const providerName = getProviderName(change);
+      const diff = buildResourceDiff(change, normalizedAction);
+
+      return {
+        key: `${resourceLabel}-${normalizedAction}-${index}`,
+        panelId: `structured-plan-panel-${index}`,
+        change,
+        action: normalizedAction,
+        resourceLabel,
+        providerName,
+        providerLabel: getProviderLabel(providerName),
+        isDataSource: isDataSourceChange(change, normalizedAction),
+        diff,
+        visibleChanges: countVisibleLeaves(diff.rows),
+        hiddenCount: diff.hiddenCount,
+      };
+    });
+  }, [changes]);
+
+  const summary = useMemo(() => {
+    return buildSummary(preparedRows);
+  }, [preparedRows]);
+
+  const summarySegments = useMemo(() => {
+    return buildSummarySegments(summary);
+  }, [summary]);
+
+  const hasDataSourceChanges = useMemo(() => {
+    return preparedRows.some((row) => row.isDataSource);
+  }, [preparedRows]);
+
+  const hasNonDataSourceChanges = useMemo(() => {
+    return preparedRows.some((row) => !row.isDataSource);
+  }, [preparedRows]);
+
+  const showDataSourcesByDefault = useMemo(() => {
+    if (!hasDataSourceChanges) {
+      return true;
+    }
+
+    if (!hasNonDataSourceChanges) {
+      return true;
+    }
+
+    return false;
+  }, [hasDataSourceChanges, hasNonDataSourceChanges]);
+  const [showDataSources, setShowDataSources] = useState(() => showDataSourcesByDefault);
+
+  const terraformVersion = useMemo(() => {
+    return extractTerraformVersion(outputLog);
+  }, [outputLog]);
+
+  useEffect(() => {
+    setShowDataSources(showDataSourcesByDefault);
+  }, [showDataSourcesByDefault]);
+
+  useEffect(() => {
+    setExpandedRowKeys((currentKeys) => {
+      const validKeys = new Set(preparedRows.map((row) => row.key));
+      return currentKeys.filter((key) => validKeys.has(key));
+    });
+  }, [preparedRows]);
+
+  const filteredRows = useMemo(() => {
+    return preparedRows.filter((row) => {
+      if (!showDataSources && row.isDataSource) {
+        return false;
+      }
+
+      if (operationFilter !== "all" && row.action !== operationFilter) {
+        return false;
+      }
+
+      if (!matchesAddressFilter(row, addressFilter)) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [addressFilter, operationFilter, preparedRows, showDataSources]);
+
   if (!changes?.length) {
     return <Empty description="No resource changes detected." image={Empty.PRESENTED_IMAGE_SIMPLE} />;
   }
 
-  const sortedChanges = [...changes].sort((left, right) => {
-    const leftAction = getPlanChangeActionLabel(left.actions, left.action) as ActionName;
-    const rightAction = getPlanChangeActionLabel(right.actions, right.action) as ActionName;
+  const isFilteredView =
+    filteredRows.length !== preparedRows.length || addressFilter.trim().length > 0 || operationFilter !== "all";
 
-    const leftOrder = actionOrder.indexOf(leftAction);
-    const rightOrder = actionOrder.indexOf(rightAction);
+  let emptyDescription = "No resources match the current filters.";
+  if (!showDataSources && hasDataSourceChanges) {
+    emptyDescription = "No resources match the current filters. Enable Show data sources to include read operations.";
+  }
 
-    if (leftOrder !== rightOrder) {
-      return leftOrder - rightOrder;
+  const toggleRow = (rowKey: string) => {
+    setExpandedRowKeys((currentKeys) => {
+      if (currentKeys.includes(rowKey)) {
+        return currentKeys.filter((currentKey) => currentKey !== rowKey);
+      }
+
+      return [...currentKeys, rowKey];
+    });
+  };
+
+  const handleAddressFilterChange = (event: ChangeEvent<HTMLInputElement>) => {
+    setAddressFilter(event.target.value);
+  };
+
+  const handleOperationFilterChange = (event: ChangeEvent<HTMLSelectElement>) => {
+    setOperationFilter(event.target.value as ActionFilter);
+  };
+
+  const handleShowDataSourcesChange = (event: ChangeEvent<HTMLInputElement>) => {
+    setShowDataSources(event.target.checked);
+  };
+
+  const handleCopyAddress = async (resourceLabel: string) => {
+    if (!navigator.clipboard?.writeText) {
+      message.error("Clipboard access is unavailable in this browser.");
+      return;
     }
 
-    const leftLabel = left.address || `${left.resourceType}.${left.resourceName}`;
-    const rightLabel = right.address || `${right.resourceType}.${right.resourceName}`;
-    return leftLabel.localeCompare(rightLabel);
-  });
+    try {
+      await navigator.clipboard.writeText(resourceLabel);
+      message.success("Copied resource address");
+    } catch {
+      message.error("Failed to copy resource address");
+    }
+  };
 
-  const summary = buildSummary(sortedChanges);
+  const handleDownloadRawLog = () => {
+    if (!outputLog) {
+      return;
+    }
+
+    const sanitizedOutput = stripAnsi(outputLog);
+    const blob = new Blob([sanitizedOutput], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+
+    anchor.href = url;
+    anchor.download = "terraform-plan.log";
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+  };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
-        {actionOrder
-          .filter((action) => summary[action] > 0)
-          .map((action) => {
-            const meta = actionMeta[action];
-
-            return (
-              <div
-                key={action}
-                style={{
-                  minWidth: 160,
-                  padding: "12px 14px",
-                  borderRadius: 12,
-                  background: meta.background,
-                  border: `1px solid ${meta.accent}22`,
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 8, color: meta.accent, fontWeight: 700 }}>
-                  {meta.icon}
-                  <span>
-                    {summary[action]} {meta.title}
-                  </span>
-                </div>
-                <div style={{ marginTop: 4, fontSize: 12, color: "#595959" }}>
-                  {summary[action]} resource{summary[action] === 1 ? "" : "s"} marked for {meta.label}
-                </div>
-              </div>
-            );
-          })}
-      </div>
-
-      <Collapse
-        items={sortedChanges.map((change, index) => {
-          const action = getPlanChangeActionLabel(change.actions, change.action) as ActionName;
-          const actionDetails = actionMeta[action];
-          const diff = buildResourceDiff(change);
-          const visibleChanges = countVisibleLeaves(diff.rows);
-          const hiddenCount = diff.hiddenCount;
-          const resourceLabel = change.address || `${change.resourceType}.${change.resourceName}`;
-
-          return {
-            key: `${resourceLabel}-${index}`,
-            label: (
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  gap: 16,
-                  alignItems: "center",
-                  width: "100%",
-                }}
-              >
-                <Space size={10} wrap>
-                  <Tag color={getPlanChangeActionColor(change.actions, change.action)}>
-                    {getPlanChangeActionLabel(change.actions, change.action)}
-                  </Tag>
-                  <span style={{ fontWeight: 600, color: "#262626" }}>{resourceLabel}</span>
-                  {change.moduleAddress ? <Tag>{change.moduleAddress}</Tag> : null}
-                </Space>
-                <span style={{ fontSize: 12, color: "#8c8c8c" }}>
-                  {visibleChanges} visible change{visibleChanges === 1 ? "" : "s"}
-                </span>
-              </div>
-            ),
-            children: (
-              <Card
-                variant="borderless"
-                style={{
-                  background: "#fafafa",
-                  boxShadow: "none",
-                }}
-                styles={{ body: { padding: 18 } }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
-                  <div>
-                    <Typography.Title level={5} style={{ margin: 0 }}>
-                      {resourceLabel}
-                    </Typography.Title>
-                    <div style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      <Tag color={actionDetails.color}>{actionDetails.label}</Tag>
-                      {change.resourceType ? <Tag>{change.resourceType}</Tag> : null}
-                      {change.moduleAddress ? <Tag>{change.moduleAddress}</Tag> : null}
-                    </div>
+    <div className="structured-plan">
+      <div className="structured-plan-shell">
+        <div className="structured-plan-summaryArea">
+          <div className="structured-plan-summaryStrip">
+            {summarySegments.length ? (
+              summarySegments.map((segment) => {
+                return (
+                  <div
+                    key={segment.key}
+                    className={`structured-plan-summarySegment structured-plan-summarySegment--${segment.key}`}
+                    style={{ flexGrow: segment.count }}
+                  >
+                    <span className="structured-plan-summarySymbol">{segment.symbol}</span>
+                    <span>{segment.label}</span>
                   </div>
-                  <div style={{ textAlign: "right", color: "#8c8c8c", fontSize: 12 }}>
-                    <div>
-                      {visibleChanges} visible change{visibleChanges === 1 ? "" : "s"}
-                    </div>
-                    {hiddenCount ? (
-                      <div>
-                        {hiddenCount} unchanged attribute{hiddenCount === 1 ? "" : "s"} hidden
+                );
+              })
+            ) : (
+              <div className="structured-plan-summaryEmpty">No managed resource changes.</div>
+            )}
+          </div>
+          <div className="structured-plan-summaryMeta">
+            <span>Resources: {formatResourceSummary(summary)}</span>
+            <span>Actions: {summary.read} to invoke</span>
+          </div>
+        </div>
+
+        <div className="structured-plan-toolbar">
+          <div className="structured-plan-toolbarControls">
+            <input
+              aria-label="Filter resources by address"
+              className="structured-plan-searchInput"
+              onChange={handleAddressFilterChange}
+              placeholder="Filter resources by address..."
+              type="text"
+              value={addressFilter}
+            />
+
+            <label className="structured-plan-selectWrap">
+              <FilterOutlined className="structured-plan-selectIcon" />
+              <select
+                aria-label="Filter by operation"
+                className="structured-plan-select"
+                onChange={handleOperationFilterChange}
+                value={operationFilter}
+              >
+                <option value="all">All operations</option>
+                <option value="create">{actionMeta.create.filterLabel}</option>
+                <option value="update">{actionMeta.update.filterLabel}</option>
+                <option value="replace">{actionMeta.replace.filterLabel}</option>
+                <option value="delete">{actionMeta.delete.filterLabel}</option>
+                <option value="read">{actionMeta.read.filterLabel}</option>
+              </select>
+              <DownOutlined className="structured-plan-selectChevron" />
+            </label>
+
+            <label className="structured-plan-checkbox">
+              <input checked={showDataSources} onChange={handleShowDataSourcesChange} type="checkbox" />
+              <span>Show data sources</span>
+            </label>
+          </div>
+
+          <div className="structured-plan-toolbarMeta">
+            {isFilteredView ? (
+              <span>
+                Showing {filteredRows.length} of {preparedRows.length} change{getPluralSuffix(preparedRows.length)}
+              </span>
+            ) : null}
+            {terraformVersion ? <span>{terraformVersion}</span> : null}
+            {outputLog ? (
+              <button className="structured-plan-toolbarButton" onClick={handleDownloadRawLog} type="button">
+                <DownloadOutlined />
+                <span>Download raw log</span>
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="structured-plan-rows">
+          {filteredRows.length ? (
+            filteredRows.map((row) => {
+              const isExpanded = expandedRowKeys.includes(row.key);
+              const rowActionMeta = actionMeta[row.action];
+              const normalizedProviderName = row.providerName.toLowerCase() as keyof typeof providerIconMap;
+              const ProviderIcon = providerIconMap[normalizedProviderName];
+
+              return (
+                <div key={row.key} className="structured-plan-row">
+                  <div className="structured-plan-rowHeader">
+                    <button
+                      aria-controls={row.panelId}
+                      aria-expanded={isExpanded}
+                      className="structured-plan-rowToggle"
+                      onClick={() => toggleRow(row.key)}
+                      type="button"
+                    >
+                      <span
+                        className={`structured-plan-chevron${isExpanded ? " structured-plan-chevron--expanded" : ""}`}
+                      >
+                        <RightOutlined />
+                      </span>
+                      <span
+                        aria-hidden="true"
+                        className={`structured-plan-actionIcon structured-plan-actionIcon--${rowActionMeta.className}`}
+                        title={rowActionMeta.displayLabel}
+                      >
+                        {rowActionMeta.symbol}
+                      </span>
+                      <span className="structured-plan-providerBadge" title={row.providerName}>
+                        {ProviderIcon ? (
+                          <ProviderIcon className="structured-plan-providerBadgeIcon" />
+                        ) : (
+                          <span>{row.providerLabel}</span>
+                        )}
+                      </span>
+                      <span className="structured-plan-address" title={row.resourceLabel}>
+                        {row.resourceLabel}
+                      </span>
+                    </button>
+
+                    <button
+                      aria-label="Copy resource address"
+                      className="structured-plan-copyButton"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void handleCopyAddress(row.resourceLabel);
+                      }}
+                      title="Copy resource address"
+                      type="button"
+                    >
+                      <CopyOutlined />
+                    </button>
+                  </div>
+
+                  {isExpanded ? (
+                    <div className="structured-plan-rowBody" id={row.panelId}>
+                      <div className="structured-plan-rowBodyInner">
+                        <div className="structured-plan-rowMeta">
+                          <div className="structured-plan-rowMetaTags">
+                            <span
+                              className={`structured-plan-actionPill structured-plan-actionPill--${rowActionMeta.className}`}
+                            >
+                              {rowActionMeta.displayLabel}
+                            </span>
+                            {row.change.resourceType ? (
+                              <span className="structured-plan-metaPill">{row.change.resourceType}</span>
+                            ) : null}
+                            {row.change.moduleAddress ? (
+                              <span className="structured-plan-metaPill">{row.change.moduleAddress}</span>
+                            ) : null}
+                            {row.isDataSource ? <span className="structured-plan-metaPill">data source</span> : null}
+                          </div>
+
+                          <div className="structured-plan-rowCounts">
+                            <span>
+                              {row.visibleChanges} visible change{getPluralSuffix(row.visibleChanges)}
+                            </span>
+                            {row.hiddenCount ? (
+                              <span>
+                                {row.hiddenCount} unchanged attribute{getPluralSuffix(row.hiddenCount)} hidden
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+
+                        {row.diff.rows.length ? (
+                          <div className="structured-plan-diffList">{renderDiffRows(row.diff.rows)}</div>
+                        ) : (
+                          <div className="structured-plan-emptyState">
+                            <Empty description="No visible attribute changes." image={Empty.PRESENTED_IMAGE_SIMPLE} />
+                          </div>
+                        )}
                       </div>
-                    ) : null}
-                  </div>
+                    </div>
+                  ) : null}
                 </div>
-
-                <div
-                  style={{
-                    marginTop: 16,
-                    padding: 16,
-                    borderRadius: 12,
-                    background: "#ffffff",
-                    border: "1px solid #f0f0f0",
-                  }}
-                >
-                  {diff.rows.length ? (
-                    renderDiffRows(diff.rows)
-                  ) : (
-                    <Empty description="No visible attribute changes." image={Empty.PRESENTED_IMAGE_SIMPLE} />
-                  )}
-                </div>
-              </Card>
-            ),
-          };
-        })}
-      />
+              );
+            })
+          ) : (
+            <div className="structured-plan-emptyState">
+              <Empty description={emptyDescription} image={Empty.PRESENTED_IMAGE_SIMPLE} />
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 };

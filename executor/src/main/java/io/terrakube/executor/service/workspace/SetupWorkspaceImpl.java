@@ -60,13 +60,16 @@ public class SetupWorkspaceImpl implements SetupWorkspace {
     WorkspaceSecurity workspaceSecurity;
     boolean enableRegistrySecurity;
     TerraformExecutor terraformExecutor;
+    String apiUrl;
 
     public SetupWorkspaceImpl(WorkspaceSecurity workspaceSecurity,
             @Value("${io.terrakube.client.enableSecurity}") boolean enableRegistrySecurity,
-            TerraformExecutor terraformExecutor) {
+            TerraformExecutor terraformExecutor,
+            @Value("${io.terrakube.api.url}") String apiUrl) {
         this.workspaceSecurity = workspaceSecurity;
         this.enableRegistrySecurity = enableRegistrySecurity;
         this.terraformExecutor = terraformExecutor;
+        this.apiUrl = apiUrl;
     }
 
     @Override
@@ -188,7 +191,8 @@ public class SetupWorkspaceImpl implements SetupWorkspace {
 
     private void downloadWorkspaceTarGz(File tarGzFolder, String source) throws IOException {
         File terraformTarGz = new File(tarGzFolder.getPath() + "/terraformContent.tar.gz");
-        URL url = new URL(source);
+        String resolvedSource = resolveRemoteContentSource(source);
+        URL url = new URL(resolvedSource);
         URLConnection urlConnection = url.openConnection();
         urlConnection.setRequestProperty("Authorization", "Bearer " + workspaceSecurity.generateAccessToken(1));
 
@@ -197,6 +201,30 @@ public class SetupWorkspaceImpl implements SetupWorkspace {
         }
 
         extractTarGZ(new FileInputStream(terraformTarGz), tarGzFolder.getPath());
+    }
+
+    private String resolveRemoteContentSource(String source) {
+        if (source == null || source.isBlank()) {
+            return source;
+        }
+
+        try {
+            URL sourceUrl = new URL(source);
+            if (!sourceUrl.getProtocol().startsWith("http")) {
+                return source;
+            }
+
+            URL terrakubeApiUrl = new URL(apiUrl);
+            String resolvedSource = new URL(terrakubeApiUrl, sourceUrl.getFile()).toString();
+            if (!resolvedSource.equals(source)) {
+                log.info("Resolved remote content source from {} to {}", source, resolvedSource);
+            }
+            return resolvedSource;
+        } catch (IOException e) {
+            log.warn("Unable to resolve remote content source {}, using original value. {}",
+                    source, e.getMessage());
+            return source;
+        }
     }
 
     public void extractTarGZ(InputStream in, String destinationFilePath) throws IOException {

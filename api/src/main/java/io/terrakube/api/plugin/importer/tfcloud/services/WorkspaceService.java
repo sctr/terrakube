@@ -8,6 +8,8 @@ import io.terrakube.api.plugin.importer.tfcloud.StateVersion;
 import io.terrakube.api.plugin.importer.tfcloud.TagResponse;
 import io.terrakube.api.plugin.importer.tfcloud.TagResponse.TagData;
 import io.terrakube.api.plugin.importer.tfcloud.TagResponse.TagData.TagAttributes;
+import io.terrakube.api.plugin.importer.tfcloud.ImportedSensitiveVariable;
+import io.terrakube.api.plugin.importer.tfcloud.SensitiveVariableImportPreview;
 import io.terrakube.api.plugin.importer.tfcloud.VariableResponse;
 import io.terrakube.api.plugin.importer.tfcloud.VariableResponse.VariableData;
 import io.terrakube.api.plugin.importer.tfcloud.VariableResponse.VariableData.VariableAttributes;
@@ -57,6 +59,9 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 @Service
 public class WorkspaceService {
+
+    private record VariableImportSummary(int importedCount, int incompleteSensitiveCount, int discardedSensitiveCount) {
+    }
 
     private final RestTemplate restTemplate;
     WorkspaceRepository workspaceRepository;
@@ -202,8 +207,7 @@ public class WorkspaceService {
         return new VarsetSummary(varset.getId(), varsetName);
     }
 
-    public List<VariableAttributes> getVariables(String apiToken, String apiUrl, String organizationName,
-            String workspaceName) {
+    public List<VariableData> getVariables(String apiToken, String apiUrl, String workspaceName) {
         UriComponentsBuilder builder = UriComponentsBuilder.fromHttpUrl(apiUrl)
                 .pathSegment("workspaces")
                 .pathSegment(workspaceName)
@@ -212,12 +216,27 @@ public class WorkspaceService {
         String url = builder.toUriString();
         VariableResponse response = makeRequest(apiToken, url, VariableResponse.class);
         if (response != null) {
-            return response.getData().stream()
-                    .map(VariableData::getAttributes)
-                    .toList();
+            return response.getData();
         } else {
             return Collections.emptyList();
         }
+    }
+
+    public List<SensitiveVariableImportPreview> getSensitiveVariables(String apiToken, String apiUrl, String workspaceName) {
+        return getVariables(apiToken, apiUrl, workspaceName).stream()
+                .filter(Objects::nonNull)
+                .filter(variableData -> variableData.getAttributes() != null)
+                .filter(variableData -> variableData.getAttributes().isSensitive())
+                .map(variableData -> {
+                    VariableAttributes attributes = variableData.getAttributes();
+                    return new SensitiveVariableImportPreview(
+                            variableData.getId(),
+                            attributes.getKey(),
+                            attributes.getDescription(),
+                            attributes.getCategory(),
+                            attributes.isHcl());
+                })
+                .toList();
     }
 
     public StateVersion.Attributes getCurrentState(String apiToken, String apiUrl, String workspaceId) {
@@ -302,18 +321,31 @@ public class WorkspaceService {
 
         // Import variables
         try {
-            List<VariableAttributes> variablesImporter = getVariables(
+            List<VariableData> variablesImporter = getVariables(
                     apiToken,
                     apiUrl,
-                    workspaceImportRequest.getOrganization(),
                     workspaceImportRequest.getId());
 
-            importVariables(variablesImporter, workspace);
-            log.info("Variables imported: {}", variablesImporter.size());
-            if (variablesImporter.size() > 0)
+            VariableImportSummary importSummary = importVariables(
+                    variablesImporter,
+                    workspaceImportRequest.getSensitiveVariables(),
+                    workspace);
+            log.info("Variables imported: {}", importSummary.importedCount());
+            if (importSummary.importedCount() > 0) {
                 result += "<li>Variables imported successfully.</li>";
-            else
+            } else {
                 result += "<li>No variables to import.</li>";
+            }
+            if (importSummary.incompleteSensitiveCount() > 0) {
+                result += "<li><b>Warning:</b> Imported "
+                        + importSummary.incompleteSensitiveCount()
+                        + " sensitive variable(s) without a value. They were marked incomplete and must be completed before a run can start.</li>";
+            }
+            if (importSummary.discardedSensitiveCount() > 0) {
+                result += "<li>Discarded "
+                        + importSummary.discardedSensitiveCount()
+                        + " sensitive variable(s) during import.</li>";
+            }
         } catch (Exception e) {
             log.error(e.getMessage());
             result += "<li>There was an error importing the variables:" + escapeHtml(e.getMessage()) + "</li>";
@@ -525,18 +557,58 @@ public class WorkspaceService {
         return HtmlUtils.htmlEscape(value);
     }
 
-    private void importVariables(List<VariableAttributes> variablesImporter, Workspace workspace) {
-        for (VariableAttributes variableAttribute : variablesImporter) {
+    private VariableImportSummary importVariables(List<VariableData> variablesImporter,
+            List<ImportedSensitiveVariable> selectedSensitiveVariables, Workspace workspace) {
+        int importedCount = 0;
+        int incompleteSensitiveCount = 0;
+        int discardedSensitiveCount = 0;
+
+        var sensitiveVariableSelections = (selectedSensitiveVariables == null ? List.<ImportedSensitiveVariable>of()
+                : selectedSensitiveVariables)
+                .stream()
+                .filter(Objects::nonNull)
+                .filter(variable -> StringUtils.hasText(variable.getSourceVariableId()))
+                .collect(Collectors.toMap(
+                        ImportedSensitiveVariable::getSourceVariableId,
+                        variable -> variable,
+                        (left, right) -> left));
+
+        for (VariableData variableData : variablesImporter) {
+            if (variableData == null || variableData.getAttributes() == null) {
+                continue;
+            }
+
+            VariableAttributes variableAttribute = variableData.getAttributes();
+            String value = variableAttribute.getValue() != null ? variableAttribute.getValue() : "";
+
+            if (variableAttribute.isSensitive()) {
+                ImportedSensitiveVariable selectedSensitiveVariable = sensitiveVariableSelections.get(variableData.getId());
+                if (selectedSensitiveVariable == null) {
+                    discardedSensitiveCount++;
+                    continue;
+                }
+
+                value = selectedSensitiveVariable.getValue() != null ? selectedSensitiveVariable.getValue() : "";
+            }
+
             Variable variable = new Variable();
             variable.setKey(variableAttribute.getKey());
-            variable.setValue(variableAttribute.getValue() != null ? variableAttribute.getValue() : "");
+            variable.setValue(value);
             variable.setDescription(variableAttribute.getDescription());
             variable.setSensitive(variableAttribute.isSensitive());
             variable.setCategory("env".equals(variableAttribute.getCategory()) ? Category.ENV : Category.TERRAFORM);
             variable.setHcl(variableAttribute.isHcl());
+            variable.setIncomplete(variableAttribute.isSensitive() && !StringUtils.hasText(value));
             variable.setWorkspace(workspace);
             variableRepository.save(variable);
+            importedCount++;
+
+            if (variable.isIncomplete()) {
+                incompleteSensitiveCount++;
+            }
         }
+
+        return new VariableImportSummary(importedCount, incompleteSensitiveCount, discardedSensitiveCount);
     }
 
     private void importTags(List<TagAttributes> tags, Workspace workspace) {

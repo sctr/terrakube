@@ -252,6 +252,7 @@ export type VariableAttributes = {
   category: string;
   description: string;
   sensitive: boolean;
+  incomplete: boolean;
 };
 
 export type FlatVariable = {

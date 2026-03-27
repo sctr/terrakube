@@ -20,4 +20,5 @@ public class WorkspaceImportRequest {
     private String description;
     private String executionMode;
     private List<String> variableCollectionIds;
+    private List<ImportedSensitiveVariable> sensitiveVariables;
 }

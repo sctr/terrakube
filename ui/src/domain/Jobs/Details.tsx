@@ -10,7 +10,7 @@ import {
   SyncOutlined,
   UserOutlined,
 } from "@ant-design/icons";
-import { Avatar, Button, Card, Collapse, message, Radio, RadioChangeEvent, Space, Spin, Tag } from "antd";
+import { Alert, Avatar, Button, Card, Collapse, message, Radio, RadioChangeEvent, Space, Spin, Tag, Typography } from "antd";
 import { AxiosResponse } from "axios";
 import parse from "html-react-parser";
 import { DateTime } from "luxon";
@@ -30,6 +30,14 @@ type Props = {
 };
 
 const TERMINAL_JOB_STATUSES = new Set(["completed", "noChanges", "failed", "cancelled", "rejected", "notExecuted"]);
+const INCOMPLETE_VARIABLE_GUARD_STEP_NAME = "Incomplete sensitive variables";
+
+type IncompleteVariableGuard = {
+  title: string;
+  variables: string[];
+  footer?: string;
+  rawMessage: string;
+};
 
 export const DetailsJob = ({ jobId }: Props) => {
   const organizationId = sessionStorage.getItem(ORGANIZATION_ARCHIVE);
@@ -61,6 +69,43 @@ export const DetailsJob = ({ jobId }: Props) => {
     return TERMINAL_JOB_STATUSES.has(status);
   };
 
+  const parseIncompleteVariableGuard = (jobOutput?: string): IncompleteVariableGuard | null => {
+    if (jobOutput == null) {
+      return null;
+    }
+
+    const lines = jobOutput
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line !== "");
+
+    if (lines.length === 0) {
+      return null;
+    }
+
+    const variables = lines
+      .filter((line) => line.startsWith("- "))
+      .map((line) => line.slice(2).trim())
+      .filter((line) => line !== "");
+
+    const footer = lines.find((line) => line.startsWith("Open the workspace Variables page"));
+
+    if (variables.length === 0 || footer == null) {
+      return null;
+    }
+
+    return {
+      title: lines[0],
+      variables,
+      footer,
+      rawMessage: jobOutput,
+    };
+  };
+
+  const isIncompleteVariableGuardStep = (stepName?: string) => {
+    return stepName === INCOMPLETE_VARIABLE_GUARD_STEP_NAME;
+  };
+
   const outputLog = async (output: string | undefined, status: string, signal: AbortSignal) => {
     if (output != null) {
       const outputUrl = getJobOutputRequestUrl(output);
@@ -82,6 +127,33 @@ export const DetailsJob = ({ jobId }: Props) => {
     }
   };
 
+  const renderIncompleteVariableAlert = (guard: IncompleteVariableGuard) => {
+    return (
+      <Alert
+        type="error"
+        showIcon
+        message="Run stopped before execution"
+        description={
+          <Space direction="vertical" size="small" style={{ width: "100%" }}>
+            <Typography.Text>{guard.title}</Typography.Text>
+            {guard.variables.length > 0 && (
+              <Space size={[8, 8]} wrap>
+                {guard.variables.map((variable) => {
+                  return (
+                    <Tag key={variable} color="orange">
+                      {variable}
+                    </Tag>
+                  );
+                })}
+              </Space>
+            )}
+            {guard.footer != null && <Typography.Text type="secondary">{guard.footer}</Typography.Text>}
+          </Space>
+        }
+      />
+    );
+  };
+
   const handleComingSoon = () => {
     message.info("Coming Soon!");
   };
@@ -95,6 +167,12 @@ export const DetailsJob = ({ jobId }: Props) => {
   };
 
   const renderStepContent = (item: JobStep) => {
+    const guard = parseIncompleteVariableGuard(job?.data?.attributes.output);
+
+    if (guard != null && isIncompleteVariableGuardStep(item.name)) {
+      return renderConsoleOutput(item);
+    }
+
     const template = uiTemplates[item.id] || uiTemplates[String(item.stepNumber)];
     const structuredChanges = planStructuredOutput[item.id] || planStructuredOutput[String(item.stepNumber)];
     const hasStructuredView = Boolean(template) || Boolean(structuredChanges);
@@ -277,6 +355,7 @@ export const DetailsJob = ({ jobId }: Props) => {
       const included = response.data.included ?? [];
       const stepEntries = included.filter((item: any) => item.type === "step");
       const workspaceEntry = included.find((item: any) => item.type === "workspace");
+      const incompleteVariableGuard = parseIncompleteVariableGuard(response.data.data.attributes.output);
 
       const stepsPromise = Promise.all(
         stepEntries.map(async (stepItem: any) => ({
@@ -285,7 +364,10 @@ export const DetailsJob = ({ jobId }: Props) => {
           status: stepItem.attributes.status,
           output: stepItem.attributes.output,
           name: stepItem.attributes.name,
-          outputLog: await outputLog(stepItem.attributes.output, stepItem.attributes.status, signal),
+          outputLog:
+            incompleteVariableGuard != null && isIncompleteVariableGuardStep(stepItem.attributes.name)
+              ? incompleteVariableGuard.rawMessage
+              : await outputLog(stepItem.attributes.output, stepItem.attributes.status, signal),
         }))
       );
 
@@ -398,6 +480,15 @@ export const DetailsJob = ({ jobId }: Props) => {
         </Spin>
       ) : (
         <Space direction="vertical" style={{ width: "100%" }}>
+          {(() => {
+            const guard = parseIncompleteVariableGuard(job.data.attributes.output);
+
+            if (guard == null) {
+              return null;
+            }
+
+            return renderIncompleteVariableAlert(guard);
+          })()}
           <div>
             <Tag
               icon={

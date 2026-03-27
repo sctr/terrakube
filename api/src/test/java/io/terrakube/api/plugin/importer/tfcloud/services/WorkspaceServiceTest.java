@@ -1,6 +1,7 @@
 package io.terrakube.api.plugin.importer.tfcloud.services;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doReturn;
@@ -14,7 +15,10 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
+import io.terrakube.api.plugin.importer.tfcloud.ImportedSensitiveVariable;
 import io.terrakube.api.plugin.importer.tfcloud.VarsetSummary;
+import io.terrakube.api.plugin.importer.tfcloud.VariableResponse.VariableData;
+import io.terrakube.api.plugin.importer.tfcloud.VariableResponse.VariableData.VariableAttributes;
 import io.terrakube.api.plugin.importer.tfcloud.WorkspaceImportRequest;
 import io.terrakube.api.plugin.storage.StorageTypeService;
 import io.terrakube.api.repository.CollectionRepository;
@@ -30,6 +34,7 @@ import io.terrakube.api.rs.Organization;
 import io.terrakube.api.rs.collection.Collection;
 import io.terrakube.api.rs.collection.Reference;
 import io.terrakube.api.rs.workspace.Workspace;
+import io.terrakube.api.rs.workspace.parameters.Variable;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
@@ -275,7 +280,7 @@ class WorkspaceServiceTest {
         when(collectionRepository.findById(missingCollectionId)).thenReturn(Optional.empty());
         when(collectionRepository.findById(crossOrgCollectionId)).thenReturn(Optional.of(crossOrgCollection));
 
-        doReturn(Collections.emptyList()).when(serviceSpy).getVariables(anyString(), anyString(), anyString(), anyString());
+        doReturn(Collections.emptyList()).when(serviceSpy).getVariables(anyString(), anyString(), anyString());
         doReturn(Collections.emptyList()).when(serviceSpy).getTags(anyString(), anyString(), anyString());
         doReturn(null).when(serviceSpy).getCurrentState(anyString(), anyString(), anyString());
 
@@ -326,7 +331,7 @@ class WorkspaceServiceTest {
             return workspace;
         });
 
-        doReturn(Collections.emptyList()).when(serviceSpy).getVariables(anyString(), anyString(), anyString(), anyString());
+        doReturn(Collections.emptyList()).when(serviceSpy).getVariables(anyString(), anyString(), anyString());
         doReturn(Collections.emptyList()).when(serviceSpy).getTags(anyString(), anyString(), anyString());
         doReturn(null).when(serviceSpy).getCurrentState(anyString(), anyString(), anyString());
 
@@ -375,7 +380,7 @@ class WorkspaceServiceTest {
         when(collectionRepository.findById(validCollectionId)).thenReturn(Optional.of(validCollection));
         when(referenceRepository.existsByWorkspaceAndCollection(any(Workspace.class), any(Collection.class))).thenReturn(true);
 
-        doReturn(Collections.emptyList()).when(serviceSpy).getVariables(anyString(), anyString(), anyString(), anyString());
+        doReturn(Collections.emptyList()).when(serviceSpy).getVariables(anyString(), anyString(), anyString());
         doReturn(Collections.emptyList()).when(serviceSpy).getTags(anyString(), anyString(), anyString());
         doReturn(null).when(serviceSpy).getCurrentState(anyString(), anyString(), anyString());
 
@@ -383,5 +388,133 @@ class WorkspaceServiceTest {
 
         assertThat(result).contains("No new variable collections to link.");
         verify(referenceRepository, never()).save(any(Reference.class));
+    }
+
+    @Test
+    void shouldReturnSensitiveVariablePreviewsOnly() {
+        RestTemplate restTemplate = new RestTemplate();
+        ReflectionTestUtils.setField(workspaceService, "restTemplate", restTemplate);
+        MockRestServiceServer server = MockRestServiceServer.bindTo(restTemplate).build();
+
+        server.expect(requestTo("https://app.terraform.io/api/v2/workspaces/ws-123/vars"))
+                .andExpect(method(HttpMethod.GET))
+                .andExpect(header("Authorization", "Bearer token"))
+                .andRespond(withSuccess(
+                        """
+                        {
+                          "data": [
+                            {
+                              "id": "var-1",
+                              "type": "vars",
+                              "attributes": {
+                                "key": "regular_value",
+                                "value": "hello",
+                                "description": "plain text",
+                                "sensitive": false,
+                                "category": "terraform",
+                                "hcl": false
+                              }
+                            },
+                            {
+                              "id": "var-2",
+                              "type": "vars",
+                              "attributes": {
+                                "key": "sensitive_token",
+                                "value": null,
+                                "description": "masked",
+                                "sensitive": true,
+                                "category": "env",
+                                "hcl": false
+                              }
+                            }
+                          ]
+                        }
+                        """,
+                        MediaType.APPLICATION_JSON));
+
+        var previews = workspaceService.getSensitiveVariables(
+                "token",
+                "https://app.terraform.io/api/v2",
+                "ws-123");
+
+        assertThat(previews)
+                .extracting("id", "key", "description", "category")
+                .containsExactly(tuple("var-2", "sensitive_token", "masked", "env"));
+
+        server.verify();
+    }
+
+    @Test
+    void shouldImportSelectedSensitiveVariablesAndMarkEmptyValuesIncomplete() {
+        WorkspaceService serviceSpy = spy(workspaceService);
+
+        UUID organizationId = UUID.randomUUID();
+        UUID workspaceId = UUID.randomUUID();
+
+        Organization destinationOrganization = new Organization();
+        destinationOrganization.setId(organizationId);
+        destinationOrganization.setName("destination-org");
+
+        WorkspaceImportRequest request = new WorkspaceImportRequest();
+        request.setId("ws-123");
+        request.setOrganizationId(organizationId.toString());
+        request.setOrganization("source-org");
+        request.setName("imported-workspace");
+        request.setTerraformVersion("1.8.5");
+        request.setExecutionMode("remote");
+        request.setDescription("Imported from Terraform Cloud");
+
+        ImportedSensitiveVariable selectedSensitiveVariable = new ImportedSensitiveVariable();
+        selectedSensitiveVariable.setSourceVariableId("var-sensitive-keep");
+        selectedSensitiveVariable.setValue("");
+        request.setSensitiveVariables(List.of(selectedSensitiveVariable));
+
+        when(organizationRepository.findById(organizationId)).thenReturn(Optional.of(destinationOrganization));
+        when(workspaceRepository.save(any(Workspace.class))).thenAnswer(invocation -> {
+            Workspace workspace = invocation.getArgument(0);
+            workspace.setId(workspaceId);
+            return workspace;
+        });
+
+        doReturn(List.of(
+                buildVariableData("var-plain", "regular_value", "hello", false, "terraform", false),
+                buildVariableData("var-sensitive-keep", "sensitive_token", null, true, "env", false),
+                buildVariableData("var-sensitive-discard", "unused_secret", null, true, "terraform", true)))
+                .when(serviceSpy)
+                .getVariables(anyString(), anyString(), anyString());
+        doReturn(Collections.emptyList()).when(serviceSpy).getTags(anyString(), anyString(), anyString());
+        doReturn(null).when(serviceSpy).getCurrentState(anyString(), anyString(), anyString());
+
+        String result = serviceSpy.importWorkspace("token", "https://app.terraform.io/api/v2", request);
+
+        assertThat(result).contains("Variables imported successfully.");
+        assertThat(result).contains("Imported 1 sensitive variable(s) without a value. They were marked incomplete");
+        assertThat(result).contains("Discarded 1 sensitive variable(s) during import.");
+
+        ArgumentCaptor<Variable> variableCaptor = ArgumentCaptor.forClass(Variable.class);
+        verify(variableRepository, times(2)).save(variableCaptor.capture());
+
+        List<Variable> savedVariables = variableCaptor.getAllValues();
+        assertThat(savedVariables)
+                .extracting(Variable::getKey, Variable::isSensitive, Variable::isIncomplete, Variable::getValue)
+                .containsExactlyInAnyOrder(
+                        tuple("regular_value", false, false, "hello"),
+                        tuple("sensitive_token", true, true, ""));
+    }
+
+    private VariableData buildVariableData(String id, String key, String value, boolean sensitive, String category, boolean hcl) {
+        VariableAttributes attributes = new VariableAttributes();
+        attributes.setKey(key);
+        attributes.setValue(value);
+        attributes.setDescription("description-" + key);
+        attributes.setSensitive(sensitive);
+        attributes.setCategory(category);
+        attributes.setHcl(hcl);
+
+        VariableData variableData = new VariableData();
+        variableData.setId(id);
+        variableData.setType("vars");
+        variableData.setAttributes(attributes);
+        return variableData;
     }
 }

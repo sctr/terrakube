@@ -95,7 +95,21 @@ type ImportProgressItem = {
 
 type WorkspaceMappingLoadResult = {
   mappings: Record<string, WorkspaceMappingRow[]>;
-  failedWorkspaceNames: string[];
+  sensitiveVariables: Record<string, SensitiveVariableDraft[]>;
+  failedCollectionWorkspaceNames: string[];
+  failedSensitiveVariableWorkspaceNames: string[];
+};
+
+type SensitiveVariablePreview = {
+  id: string;
+  key: string;
+  description?: string;
+  category: string;
+  hcl: boolean;
+};
+
+type SensitiveVariableDraft = SensitiveVariablePreview & {
+  value: string;
 };
 
 const NONE_COLLECTION_VALUE = "__none__";
@@ -117,6 +131,9 @@ export const ImportWorkspace = () => {
   const [importProgress, setImportProgress] = useState<ImportProgressItem[]>([]);
   const [availableCollections, setAvailableCollections] = useState<CollectionOption[]>([]);
   const [workspaceMappings, setWorkspaceMappings] = useState<Record<string, WorkspaceMappingRow[]>>({});
+  const [workspaceSensitiveVariables, setWorkspaceSensitiveVariables] = useState<Record<string, SensitiveVariableDraft[]>>(
+    {}
+  );
   const [mappingModalOpen, setMappingModalOpen] = useState(false);
   const [mappingDataLoading, setMappingDataLoading] = useState(false);
   const [mappingTransitionLoading, setMappingTransitionLoading] = useState(false);
@@ -337,6 +354,21 @@ export const ImportWorkspace = () => {
     }));
   };
 
+  const buildSensitiveVariableDrafts = (variables: SensitiveVariablePreview[]): SensitiveVariableDraft[] => {
+    return variables.map((variable) => ({
+      ...variable,
+      value: "",
+    }));
+  };
+
+  const getVariableCategoryLabel = (category?: string) => {
+    if (category?.toLowerCase() === "env") {
+      return "env";
+    }
+
+    return "terraform";
+  };
+
   const getImporterBaseUrl = () => {
     const apiUrl = window._env_?.REACT_APP_TERRAKUBE_API_URL;
     if (apiUrl == null || apiUrl === "") {
@@ -383,39 +415,74 @@ export const ImportWorkspace = () => {
     return buildWorkspaceMappingRows(varsets);
   };
 
-  const loadWorkspaceMappings = async (importerBaseUrl: string): Promise<WorkspaceMappingLoadResult> => {
+  const fetchWorkspaceSensitiveVariables = async (
+    importerBaseUrl: string,
+    workspace: WorkspaceRecord
+  ): Promise<SensitiveVariableDraft[]> => {
+    const response = await axiosInstance.get(`${importerBaseUrl}/workspaces/${workspace.id}/sensitive-variables`, {
+      headers: {
+        "X-TFC-Token": form.getFieldValue("apiToken"),
+        "X-TFC-Url": form.getFieldValue("apiUrl"),
+      },
+    });
+
+    const sensitiveVariables: SensitiveVariablePreview[] = response.data ?? [];
+    return buildSensitiveVariableDrafts(sensitiveVariables);
+  };
+
+  const loadWorkspaceImportData = async (importerBaseUrl: string): Promise<WorkspaceMappingLoadResult> => {
     const results = await Promise.all(
       selectedWorkspaces.map(async (workspace) => {
+        let mappingRows: WorkspaceMappingRow[] = [];
+        let sensitiveVariables: SensitiveVariableDraft[] = [];
+        let failedCollections = false;
+        let failedSensitiveVariables = false;
+
         try {
-          const rows = await fetchWorkspaceVarsets(importerBaseUrl, workspace);
-          return {
-            workspaceId: workspace.id,
-            workspaceName: workspace.attributes.name,
-            rows,
-            failed: false,
-          };
+          mappingRows = await fetchWorkspaceVarsets(importerBaseUrl, workspace);
         } catch {
-          return {
-            workspaceId: workspace.id,
-            workspaceName: workspace.attributes.name,
-            rows: [] as WorkspaceMappingRow[],
-            failed: true,
-          };
+          failedCollections = true;
         }
+
+        try {
+          sensitiveVariables = await fetchWorkspaceSensitiveVariables(importerBaseUrl, workspace);
+        } catch {
+          failedSensitiveVariables = true;
+        }
+
+        return {
+          workspaceId: workspace.id,
+          workspaceName: workspace.attributes.name,
+          mappingRows,
+          sensitiveVariables,
+          failedCollections,
+          failedSensitiveVariables,
+        };
       })
     );
 
     const mappings: Record<string, WorkspaceMappingRow[]> = {};
-    const failedWorkspaceNames: string[] = [];
+    const sensitiveVariables: Record<string, SensitiveVariableDraft[]> = {};
+    const failedCollectionWorkspaceNames: string[] = [];
+    const failedSensitiveVariableWorkspaceNames: string[] = [];
 
     for (const result of results) {
-      mappings[result.workspaceId] = result.rows;
-      if (result.failed) {
-        failedWorkspaceNames.push(result.workspaceName);
+      mappings[result.workspaceId] = result.mappingRows;
+      sensitiveVariables[result.workspaceId] = result.sensitiveVariables;
+      if (result.failedCollections) {
+        failedCollectionWorkspaceNames.push(result.workspaceName);
+      }
+      if (result.failedSensitiveVariables) {
+        failedSensitiveVariableWorkspaceNames.push(result.workspaceName);
       }
     }
 
-    return { mappings, failedWorkspaceNames };
+    return {
+      mappings,
+      sensitiveVariables,
+      failedCollectionWorkspaceNames,
+      failedSensitiveVariableWorkspaceNames,
+    };
   };
 
   const getSelectedCollectionIds = (workspaceId: string): string[] => {
@@ -429,6 +496,14 @@ export const ImportWorkspace = () => {
     }
 
     return selectedCollectionIds;
+  };
+
+  const getSelectedSensitiveVariables = (workspaceId: string) => {
+    const selectedSensitiveVariables = workspaceSensitiveVariables[workspaceId] ?? [];
+    return selectedSensitiveVariables.map((variable) => ({
+      sourceVariableId: variable.id,
+      value: variable.value,
+    }));
   };
 
   const beginImport = async () => {
@@ -467,18 +542,32 @@ export const ImportWorkspace = () => {
     try {
       const importerBaseUrl = getImporterBaseUrl();
       await loadAvailableCollections();
-      const { mappings, failedWorkspaceNames } = await loadWorkspaceMappings(importerBaseUrl);
+      const {
+        mappings,
+        sensitiveVariables,
+        failedCollectionWorkspaceNames,
+        failedSensitiveVariableWorkspaceNames,
+      } = await loadWorkspaceImportData(importerBaseUrl);
+
+      if (failedSensitiveVariableWorkspaceNames.length > 0) {
+        message.error(
+          `Failed to load sensitive variables for ${failedSensitiveVariableWorkspaceNames.length} workspace(s). Please try again before importing.`
+        );
+        return;
+      }
+
       setWorkspaceMappings(mappings);
+      setWorkspaceSensitiveVariables(sensitiveVariables);
       setImportProgress([]);
       setCurrentMappingWorkspaceIndex(0);
       setMappingModalOpen(true);
-      if (failedWorkspaceNames.length > 0) {
+      if (failedCollectionWorkspaceNames.length > 0) {
         message.warning(
-          `${failedWorkspaceNames.length} workspace variable collection list(s) could not be loaded. You can still add Terrakube collections manually.`
+          `${failedCollectionWorkspaceNames.length} workspace variable collection list(s) could not be loaded. You can still add Terrakube collections manually.`
         );
       }
     } catch (error) {
-      message.error(`Failed to load workspace variable collections: ${getErrorMessage(error)}`);
+      message.error(`Failed to load workspace import details: ${getErrorMessage(error)}`);
     } finally {
       setMappingDataLoading(false);
     }
@@ -510,6 +599,7 @@ export const ImportWorkspace = () => {
           executionMode: workspace?.attributes["execution-mode"],
           description: workspace.attributes.description,
           variableCollectionIds: getSelectedCollectionIds(workspace.id),
+          sensitiveVariables: getSelectedSensitiveVariables(workspace.id),
         },
         {
           headers: {
@@ -559,6 +649,7 @@ export const ImportWorkspace = () => {
         setSelectedWorkspaces([]);
         setImportProgress([]);
         setWorkspaceMappings({});
+        setWorkspaceSensitiveVariables({});
         setWorkspacesLoading(false);
       })
       .catch((error) => {
@@ -610,6 +701,8 @@ export const ImportWorkspace = () => {
   const currentMappingWorkspace = selectedWorkspaces[currentMappingWorkspaceIndex];
   const currentMappingRows =
     currentMappingWorkspace == null ? [] : (workspaceMappings[currentMappingWorkspace.id] ?? []);
+  const currentSensitiveVariableRows =
+    currentMappingWorkspace == null ? [] : (workspaceSensitiveVariables[currentMappingWorkspace.id] ?? []);
   const totalMappingWorkspaces = selectedWorkspaces.length;
   const currentMappingStep = Math.min(currentMappingWorkspaceIndex + 1, totalMappingWorkspaces);
   const remainingWorkspaceCount = Math.max(totalMappingWorkspaces - currentMappingStep, 0);
@@ -617,6 +710,10 @@ export const ImportWorkspace = () => {
     totalMappingWorkspaces === 0 ? 0 : Math.round((currentMappingStep / totalMappingWorkspaces) * 100);
   const selectedCollectionCount =
     currentMappingWorkspace == null ? 0 : getSelectedCollectionIds(currentMappingWorkspace.id).length;
+  const selectedSensitiveVariableCount = currentSensitiveVariableRows.length;
+  const incompleteSensitiveVariableCount = currentSensitiveVariableRows.filter((variable) => {
+    return variable.value.trim() === "";
+  }).length;
   const collectionOptions = [
     { value: NONE_COLLECTION_VALUE, label: "None" },
     ...availableCollections.map((collection) => ({
@@ -632,6 +729,17 @@ export const ImportWorkspace = () => {
 
     setWorkspaceMappings((prevMappings) => ({
       ...prevMappings,
+      [currentMappingWorkspace.id]: nextRows,
+    }));
+  };
+
+  const updateCurrentWorkspaceSensitiveVariables = (nextRows: SensitiveVariableDraft[]) => {
+    if (currentMappingWorkspace == null) {
+      return;
+    }
+
+    setWorkspaceSensitiveVariables((prevSensitiveVariables) => ({
+      ...prevSensitiveVariables,
       [currentMappingWorkspace.id]: nextRows,
     }));
   };
@@ -669,6 +777,26 @@ export const ImportWorkspace = () => {
   const handleRemoveAdditionalCollection = (rowKey: string) => {
     const nextRows = currentMappingRows.filter((row) => row.key !== rowKey);
     updateCurrentWorkspaceMappings(nextRows);
+  };
+
+  const handleSensitiveVariableValueChange = (variableId: string, value: string) => {
+    const nextRows = currentSensitiveVariableRows.map((variable) => {
+      if (variable.id !== variableId) {
+        return variable;
+      }
+
+      return {
+        ...variable,
+        value,
+      };
+    });
+
+    updateCurrentWorkspaceSensitiveVariables(nextRows);
+  };
+
+  const handleRemoveSensitiveVariable = (variableId: string) => {
+    const nextRows = currentSensitiveVariableRows.filter((variable) => variable.id !== variableId);
+    updateCurrentWorkspaceSensitiveVariables(nextRows);
   };
 
   const handleCloseMappingModal = () => {
@@ -1037,6 +1165,18 @@ export const ImportWorkspace = () => {
                       </div>
                     </Card>
                     <Card size="small" style={{ borderRadius: "10px" }}>
+                      <Typography.Text type="secondary">Sensitive variables</Typography.Text>
+                      <div>
+                        <Typography.Text strong>{selectedSensitiveVariableCount}</Typography.Text>
+                      </div>
+                    </Card>
+                    <Card size="small" style={{ borderRadius: "10px" }}>
+                      <Typography.Text type="secondary">Still incomplete</Typography.Text>
+                      <div>
+                        <Typography.Text strong>{incompleteSensitiveVariableCount}</Typography.Text>
+                      </div>
+                    </Card>
+                    <Card size="small" style={{ borderRadius: "10px" }}>
                       <Typography.Text type="secondary">Workspaces remaining</Typography.Text>
                       <div>
                         <Typography.Text strong>{remainingWorkspaceCount}</Typography.Text>
@@ -1047,13 +1187,14 @@ export const ImportWorkspace = () => {
               </Card>
               <Card
                 size="small"
-                title="Review mappings for this workspace"
+                title="Review import details for this workspace"
                 style={{ borderRadius: "12px" }}
                 bodyStyle={{ paddingTop: "12px" }}
               >
                 <Typography.Text type="secondary">
                   Match each Terraform Cloud variable collection to an existing Terrakube variable collection. You can
-                  also attach extra Terrakube variable collections that were not present on the source workspace.
+                  also attach extra Terrakube variable collections that were not present on the source workspace. Any
+                  sensitive variables shown below can be filled now, left blank to stay incomplete, or discarded.
                 </Typography.Text>
               </Card>
               {availableCollections.length === 0 && (
@@ -1152,6 +1293,81 @@ export const ImportWorkspace = () => {
                   </Button>
                 </div>
               </Card>
+              <Card
+                size="small"
+                title="Sensitive variables that need a value"
+                style={{ borderRadius: "12px" }}
+                bodyStyle={{ paddingTop: "12px" }}
+              >
+                <Typography.Text type="secondary">
+                  Terraform Cloud does not expose sensitive values during import. Leave a value blank to import that
+                  variable as incomplete, which blocks future runs until the value is filled in or the variable is
+                  removed.
+                </Typography.Text>
+              </Card>
+              {currentSensitiveVariableRows.length === 0 && (
+                <Alert
+                  type="info"
+                  showIcon
+                  message="No sensitive variables need attention for this workspace."
+                />
+              )}
+              {currentSensitiveVariableRows.map((variable) => (
+                <Card
+                  key={variable.id}
+                  size="small"
+                  style={{
+                    borderRadius: "12px",
+                    borderColor: variable.value.trim() === "" ? "rgba(250, 140, 22, 0.35)" : "rgba(22, 119, 255, 0.2)",
+                    background: variable.value.trim() === "" ? "rgba(250, 140, 22, 0.04)" : "rgba(22, 119, 255, 0.03)",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "minmax(0, 1fr) minmax(280px, 360px) auto",
+                      gap: "16px",
+                      alignItems: "end",
+                    }}
+                  >
+                    <div>
+                      <Typography.Text type="secondary">Sensitive variable</Typography.Text>
+                      <div style={{ marginTop: "6px", display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                        <Typography.Text strong>{variable.key}</Typography.Text>
+                        <Typography.Text type="secondary">
+                          {getVariableCategoryLabel(variable.category)}
+                        </Typography.Text>
+                        {variable.hcl && <Typography.Text type="secondary">HCL</Typography.Text>}
+                      </div>
+                      {variable.description != null && variable.description !== "" && (
+                        <div style={{ marginTop: "8px" }}>
+                          <Typography.Text type="secondary">{variable.description}</Typography.Text>
+                        </div>
+                      )}
+                      <div style={{ marginTop: "8px" }}>
+                        <Typography.Text type={variable.value.trim() === "" ? "warning" : "secondary"}>
+                          {variable.value.trim() === ""
+                            ? "Will be imported as incomplete until a value is added later."
+                            : "A replacement value will be stored during import."}
+                        </Typography.Text>
+                      </div>
+                    </div>
+                    <div>
+                      <Typography.Text type="secondary">Replacement value</Typography.Text>
+                      <div style={{ marginTop: "6px" }}>
+                        <Input.Password
+                          value={variable.value}
+                          onChange={(event) => handleSensitiveVariableValueChange(variable.id, event.target.value)}
+                          placeholder="Optional. Leave empty to keep this variable incomplete."
+                        />
+                      </div>
+                    </div>
+                    <Button danger type="text" icon={<DeleteOutlined />} onClick={() => handleRemoveSensitiveVariable(variable.id)}>
+                      Discard
+                    </Button>
+                  </div>
+                </Card>
+              ))}
             </Space>
           </Modal>
           <Space hidden={listHidden} direction="vertical">

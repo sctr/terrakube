@@ -182,7 +182,15 @@ public class WebhookService {
 
     @Transactional
     public void createOrUpdateWorkspaceWebhook(Webhook webhook) {
-        Workspace workspace = webhook.getWorkspace();
+        Webhook persistedWebhook = webhookRepository.findById(webhook.getId())
+                .orElseThrow(() -> new IllegalArgumentException("Webhook not found"));
+
+        Workspace workspace = persistedWebhook.getWorkspace();
+        if (workspace == null) {
+            log.warn("There is no workspace defined for webhook {}", webhook.getId());
+            throw new IllegalArgumentException("No workspace defined for webhook");
+        }
+
         if (workspace.getVcs() == null) {
             log.warn("There is no VCS defined for workspace {}, skipping webhook creation", workspace.getName());
             throw new IllegalArgumentException("No VCS defined for workspace");
@@ -193,13 +201,13 @@ public class WebhookService {
         Vcs vcs = workspace.getVcs();
         switch (vcs.getVcsType()) {
             case GITHUB:
-                webhookRemoteId = gitHubWebhookService.createOrUpdateWebhook(workspace, webhook);
+                webhookRemoteId = gitHubWebhookService.createOrUpdateWebhook(workspace, persistedWebhook);
                 break;
             case GITLAB:
-                webhookRemoteId = gitLabWebhookService.createOrUpdateWebhook(workspace, webhook);
+                webhookRemoteId = gitLabWebhookService.createOrUpdateWebhook(workspace, persistedWebhook);
                 break;
             case BITBUCKET:
-                webhookRemoteId = bitBucketWebhookService.createOrUpdateWebhook(workspace, webhook);
+                webhookRemoteId = bitBucketWebhookService.createOrUpdateWebhook(workspace, persistedWebhook);
                 break;
             default:
                 break;
@@ -210,7 +218,7 @@ public class WebhookService {
             throw new IllegalArgumentException("Error creating/updating the webhook");
         }
 
-        webhook.setRemoteHookId(webhookRemoteId);
+        persistedWebhook.setRemoteHookId(webhookRemoteId);
     }
 
     @Transactional

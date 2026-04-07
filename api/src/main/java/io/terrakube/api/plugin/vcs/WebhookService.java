@@ -35,6 +35,8 @@ import lombok.extern.slf4j.Slf4j;
 @Service
 public class WebhookService {
 
+    private final WebhookPathMatcher webhookPathMatcher = new WebhookPathMatcher();
+
     WebhookRepository webhookRepository;
     WebhookEventRepository webhookEventRepository;
     GitHubWebhookService gitHubWebhookService;
@@ -262,16 +264,22 @@ public class WebhookService {
     }
 
     private boolean checkFileChanges(List<String> files, WebhookEvent webhookEvent) {
-        String[] triggeredPath = webhookEvent.getPath().split(",");
-        for (String file : files) {
-            for (int i = 0; i < triggeredPath.length; i++) {
-                if (file.matches(triggeredPath[i])) {
-                    log.info("Changed file {} matches set trigger pattern {}", file, triggeredPath[i]);
-                    return true;
-                }
-            }
+        if (webhookPathMatcher.matchesAny(files, webhookEvent)) {
+            log.info(
+                    "Changed files {} match configured {} webhook paths {}",
+                    files,
+                    webhookPathMatcher.resolvePathType(webhookEvent),
+                    webhookEvent.getPath()
+            );
+            return true;
         }
-        log.info("Changed files {} doesn't match any of the trigger path pattern {}", files, triggeredPath);
+
+        log.info(
+                "Changed files {} don't match configured {} webhook paths {}",
+                files,
+                webhookPathMatcher.resolvePathType(webhookEvent),
+                webhookEvent.getPath()
+        );
         return false;
     }
 

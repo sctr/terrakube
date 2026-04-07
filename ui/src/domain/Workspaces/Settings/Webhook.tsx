@@ -19,11 +19,14 @@ import {
 import { useEffect, useState } from "react";
 import { v7 as uuid } from "uuid";
 import axiosInstance from "../../../config/axiosConfig";
-import { Template, VcsType, WebhookEvent, Workspace } from "../../types";
+import { Template, VcsType, WebhookEvent, WebhookEventPathType, Workspace } from "../../types";
 import { atomicHeader, renderVCSLogo } from "../Workspaces";
 
 const isValidRegexList = (str: string | undefined) => {
-  if (!str) return true;
+  if (!str) {
+    return true;
+  }
+
   return str
     .split(",")
     .map((s) => s.trim())
@@ -35,6 +38,19 @@ const isValidRegexList = (str: string | undefined) => {
         return false;
       }
     });
+};
+
+const createEmptyWebhookEvent = (key: number) => {
+  return {
+    key,
+    id: uuid(),
+    prWorkflowEnabled: false,
+    pathType: WebhookEventPathType.PATTERN,
+  };
+};
+
+const isRegexPathType = (pathType: WebhookEventPathType | undefined) => {
+  return pathType === WebhookEventPathType.REGEX;
 };
 
 type Props = {
@@ -49,13 +65,7 @@ export const WorkspaceWebhook = ({ workspace, vcsProvider, orgTemplates, manageW
   const [webhookEnabled, setWebhookEnabled] = useState(false);
   const [recordIndex, setRecordIndex] = useState(1);
   const organizationId = workspace.relationships.organization.data.id;
-  const [webhookEvents, setWebhookEvents] = useState<any[]>([
-    {
-      key: 1,
-      id: uuid(),
-      prWorkflowEnabled: false,
-    } as any,
-  ]);
+  const [webhookEvents, setWebhookEvents] = useState<any[]>([createEmptyWebhookEvent(1) as any]);
   const workspaceId = workspace.id;
   const [remoteHookId, setRemoteHookId] = useState("");
   const webhookId = workspace.relationships.webhook?.data?.id;
@@ -91,18 +101,14 @@ export const WorkspaceWebhook = ({ workspace, vcsProvider, orgTemplates, manageW
               event: event.attributes.event,
               branch: event.attributes.branch,
               file: event.attributes.path,
+              pathType: event.attributes.pathType || WebhookEventPathType.REGEX,
               template: event.attributes.templateId,
               prWorkflowEnabled: event.attributes.prWorkflowEnabled || false,
               created: true,
             };
           });
         setRecordIndex(events.length + 1);
-        setWebhookEvents(
-          events.concat({
-            key: i,
-            id: uuid(),
-          })
-        );
+        setWebhookEvents(events.concat(createEmptyWebhookEvent(i)));
       })
       .catch(() => {
         message.error("Failed to load webhook");
@@ -110,16 +116,13 @@ export const WorkspaceWebhook = ({ workspace, vcsProvider, orgTemplates, manageW
   };
   const handleEventChange = (index: number, _: any, name: string, value: string | boolean) => {
     webhookEvents[index][name] = value;
+    if (name === "pathType" && !isRegexPathType(value as WebhookEventPathType)) {
+      webhookEvents[index].fileStatus = "success";
+    }
+
     if (index == webhookEvents.length - 1) {
       const index = recordIndex + 1;
-      setWebhookEvents([
-        ...webhookEvents,
-        {
-          key: index,
-          id: uuid(),
-          prWorkflowEnabled: false,
-        },
-      ]);
+      setWebhookEvents([...webhookEvents, createEmptyWebhookEvent(index)]);
       setRecordIndex(index);
     } else {
       setWebhookEvents([...webhookEvents]);
@@ -143,11 +146,7 @@ export const WorkspaceWebhook = ({ workspace, vcsProvider, orgTemplates, manageW
         });
     }
     if (newWebhookEvents.length == 0) {
-      newWebhookEvents.push({
-        key: 1,
-        id: uuid(),
-        prWorkflowEnabled: false,
-      });
+      newWebhookEvents.push(createEmptyWebhookEvent(1));
     }
     setWebhookEvents(newWebhookEvents);
   };
@@ -202,14 +201,15 @@ export const WorkspaceWebhook = ({ workspace, vcsProvider, orgTemplates, manageW
           event.branchStatus = "error";
           regexError = true;
         }
-        if (!isValidRegexList(event.file)) {
+
+        if (isRegexPathType(event.pathType) && !isValidRegexList(event.file)) {
           event.fileStatus = "error";
           regexError = true;
         }
       });
     if (regexError) {
       setWaiting(false);
-      message.error("Branch and File must be valid regex patterns");
+      message.error("Branch and release matching use regex. File must be valid regex when Path Type is Regex.");
       setWebhookEvents([...webhookEvents]);
       return;
     }
@@ -228,7 +228,7 @@ export const WorkspaceWebhook = ({ workspace, vcsProvider, orgTemplates, manageW
             events: {
               data: webhookEvents
                 .filter((_, index) => index < recordIndex - 1)
-                .map(function (event, _) {
+                .map(function (event) {
                   return {
                     type: "webhook_event",
                     id: event.id,
@@ -239,7 +239,7 @@ export const WorkspaceWebhook = ({ workspace, vcsProvider, orgTemplates, manageW
         },
         ...webhookEvents
           .filter((_, index) => index < recordIndex - 1)
-          .map(function (event, _) {
+          .map(function (event) {
             return {
               op: event.created ? "update" : "add",
               href: event.created
@@ -253,6 +253,7 @@ export const WorkspaceWebhook = ({ workspace, vcsProvider, orgTemplates, manageW
                   event: event.event.toUpperCase(),
                   branch: event.branch,
                   path: event.file,
+                  pathType: event.pathType || WebhookEventPathType.PATTERN,
                   templateId: event.template,
                   prWorkflowEnabled: event.prWorkflowEnabled || false,
                 },
@@ -326,15 +327,14 @@ export const WorkspaceWebhook = ({ workspace, vcsProvider, orgTemplates, manageW
       dataIndex: "prWorkflowEnabled",
       key: "prWorkflowEnabled",
       width: "8%",
-      render: (_: string, record: any, index: number) => (
+      render: (_: string, record: any, index: number) =>
         record.event === "pull_request" ? (
           <Switch
             size="small"
             checked={record.prWorkflowEnabled || false}
             onChange={(checked) => handleEventChange(index, record.key, "prWorkflowEnabled", checked)}
           />
-        ) : null
-      ),
+        ) : null,
     },
     {
       title: "Branch/release",
@@ -342,7 +342,7 @@ export const WorkspaceWebhook = ({ workspace, vcsProvider, orgTemplates, manageW
       key: "branch",
       render: (_: string, record: any, index: number) => (
         <Input
-          placeholder="List of regex to match aginst branch names or release names"
+          placeholder="Regex list to match branch or release names"
           name="branch"
           status={record.branchStatus}
           value={record.branch}
@@ -351,13 +351,33 @@ export const WorkspaceWebhook = ({ workspace, vcsProvider, orgTemplates, manageW
       ),
     },
     {
+      title: "Path Type",
+      dataIndex: "pathType",
+      key: "pathType",
+      width: "10%",
+      render: (_: string, record: any, index: number) => (
+        <Select
+          placeholder="Select a path type"
+          value={record.pathType || WebhookEventPathType.PATTERN}
+          onChange={(value) => handleEventChange(index, record.key, "pathType", value)}
+        >
+          <Select.Option value={WebhookEventPathType.PATTERN}>Pattern</Select.Option>
+          <Select.Option value={WebhookEventPathType.REGEX}>Regex</Select.Option>
+        </Select>
+      ),
+    },
+    {
       title: "File",
       dataIndex: "file",
       key: "file",
-      width: "45%",
+      width: "35%",
       render: (_: string, record: any, index: number) => (
         <Input
-          placeholder="List of regex to match aginst changed files"
+          placeholder={
+            isRegexPathType(record.pathType)
+              ? "List of regex to match against changed files"
+              : "List of wildcard patterns like terraform/* or modules/**"
+          }
           name="file"
           value={record.file}
           status={record.fileStatus}
@@ -405,7 +425,9 @@ export const WorkspaceWebhook = ({ workspace, vcsProvider, orgTemplates, manageW
             cancelText="No"
             disabled={!manageWorkspace}
           >
-            <a>Delete</a>
+            <Button type="link" size="small">
+              Delete
+            </Button>
           </Popconfirm>
         </Space>
       ),
@@ -418,6 +440,10 @@ export const WorkspaceWebhook = ({ workspace, vcsProvider, orgTemplates, manageW
       <Typography.Text type="secondary" style={{ display: "block", marginBottom: 24 }}>
         Webhooks allow you to trigger a workspace run when a specific event occurs in the repository. This only works
         with VCS flow workspace.
+      </Typography.Text>
+      <Typography.Text type="secondary" style={{ display: "block", marginBottom: 24 }}>
+        Use <b>Pattern</b> for simple wildcards like <code>terraform/*</code> or <code>modules/**</code>. Use{" "}
+        <b>Regex</b> when you need full regular expression matching. Branch and release matching always use regex.
       </Typography.Text>
       <h2>VCS Webhook Configuration</h2>
       <Spin spinning={waiting}>

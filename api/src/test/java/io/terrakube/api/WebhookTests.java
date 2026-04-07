@@ -7,6 +7,7 @@ import io.terrakube.api.rs.vcs.Vcs;
 import io.terrakube.api.rs.vcs.VcsType;
 import io.terrakube.api.rs.webhook.Webhook;
 import io.terrakube.api.rs.webhook.WebhookEvent;
+import io.terrakube.api.rs.webhook.WebhookEventPathType;
 import io.terrakube.api.rs.webhook.WebhookEventType;
 import io.terrakube.api.rs.workspace.Workspace;
 import org.junit.jupiter.api.Assertions;
@@ -48,17 +49,87 @@ class WebhookTests extends ServerApplicationTests {
     @Test
     void createWebhookFromAtomicOperationsAfterCommit() {
         String workspaceId = createWorkspace();
+        stubGithubWebhookCreation();
 
+        String webhookId = UUID.randomUUID().toString();
+        String eventId = UUID.randomUUID().toString();
+
+        given()
+                .headers(
+                        "Authorization", "Bearer " + generatePAT("TERRAKUBE_DEVELOPERS"),
+                        "Content-Type", ATOMIC_CONTENT_TYPE,
+                        "Accept", ATOMIC_CONTENT_TYPE
+                )
+                .body(buildRequestBody(workspaceId, webhookId, eventId, "bang/*", "\"pathType\": \"PATTERN\","))
+                .when()
+                .post("/api/v1/operations")
+                .then()
+                .log()
+                .all()
+                .statusCode(HttpStatus.OK.value());
+
+        Webhook persistedWebhook = webhookRepository.findById(UUID.fromString(webhookId))
+                .orElseThrow(() -> new IllegalStateException("Webhook was not persisted"));
+
+        Assertions.assertEquals("123456", persistedWebhook.getRemoteHookId());
+
+        List<WebhookEvent> persistedEvents = webhookEventRepository
+                .findByWebhookAndEventOrderByPriorityAsc(persistedWebhook, WebhookEventType.PUSH);
+
+        Assertions.assertEquals(1, persistedEvents.size());
+        Assertions.assertEquals("bang/*", persistedEvents.get(0).getPath());
+        Assertions.assertEquals(WebhookEventPathType.PATTERN, persistedEvents.get(0).getPathType());
+
+        wireMockServer.verify(1, postRequestedFor(urlEqualTo("/repos/acme/repo/hooks")));
+    }
+
+    @Test
+    void createWebhookFromAtomicOperationsWithoutPathTypeDefaultsToRegex() {
+        String workspaceId = createWorkspace();
+        stubGithubWebhookCreation();
+
+        String webhookId = UUID.randomUUID().toString();
+        String eventId = UUID.randomUUID().toString();
+
+        given()
+                .headers(
+                        "Authorization", "Bearer " + generatePAT("TERRAKUBE_DEVELOPERS"),
+                        "Content-Type", ATOMIC_CONTENT_TYPE,
+                        "Accept", ATOMIC_CONTENT_TYPE
+                )
+                .body(buildRequestBody(workspaceId, webhookId, eventId, "^bang/.+", ""))
+                .when()
+                .post("/api/v1/operations")
+                .then()
+                .log()
+                .all()
+                .statusCode(HttpStatus.OK.value());
+
+        Webhook persistedWebhook = webhookRepository.findById(UUID.fromString(webhookId))
+                .orElseThrow(() -> new IllegalStateException("Webhook was not persisted"));
+
+        Assertions.assertEquals("123456", persistedWebhook.getRemoteHookId());
+
+        List<WebhookEvent> persistedEvents = webhookEventRepository
+                .findByWebhookAndEventOrderByPriorityAsc(persistedWebhook, WebhookEventType.PUSH);
+
+        Assertions.assertEquals(1, persistedEvents.size());
+        Assertions.assertEquals("^bang/.+", persistedEvents.get(0).getPath());
+        Assertions.assertEquals(WebhookEventPathType.REGEX, persistedEvents.get(0).getPathType());
+
+        wireMockServer.verify(1, postRequestedFor(urlEqualTo("/repos/acme/repo/hooks")));
+    }
+
+    private void stubGithubWebhookCreation() {
         wireMockServer.stubFor(post(urlEqualTo("/repos/acme/repo/hooks"))
                 .willReturn(aResponse()
                         .withStatus(HttpStatus.CREATED.value())
                         .withHeader("Content-Type", "application/json")
                         .withBody("{\"id\":\"123456\"}")));
+    }
 
-        String webhookId = UUID.randomUUID().toString();
-        String eventId = UUID.randomUUID().toString();
-
-        String requestBody = """
+    private String buildRequestBody(String workspaceId, String webhookId, String eventId, String path, String pathTypeField) {
+        return """
                 {
                   "atomic:operations": [
                     {
@@ -89,7 +160,8 @@ class WebhookTests extends ServerApplicationTests {
                           "priority": 1,
                           "event": "PUSH",
                           "branch": "development",
-                          "path": "^bang/.+",
+                          "path": "%s",
+                          %s
                           "templateId": "%s",
                           "prWorkflowEnabled": false
                         }
@@ -106,35 +178,10 @@ class WebhookTests extends ServerApplicationTests {
                 workspaceId,
                 webhookId,
                 eventId,
+                path,
+                pathTypeField,
                 TEMPLATE_ID
         );
-
-        given()
-                .headers(
-                        "Authorization", "Bearer " + generatePAT("TERRAKUBE_DEVELOPERS"),
-                        "Content-Type", ATOMIC_CONTENT_TYPE,
-                        "Accept", ATOMIC_CONTENT_TYPE
-                )
-                .body(requestBody)
-                .when()
-                .post("/api/v1/operations")
-                .then()
-                .log()
-                .all()
-                .statusCode(HttpStatus.OK.value());
-
-        Webhook persistedWebhook = webhookRepository.findById(UUID.fromString(webhookId))
-                .orElseThrow(() -> new IllegalStateException("Webhook was not persisted"));
-
-        Assertions.assertEquals("123456", persistedWebhook.getRemoteHookId());
-
-        List<WebhookEvent> persistedEvents = webhookEventRepository
-                .findByWebhookAndEventOrderByPriorityAsc(persistedWebhook, WebhookEventType.PUSH);
-
-        Assertions.assertEquals(1, persistedEvents.size());
-        Assertions.assertEquals("^bang/.+", persistedEvents.get(0).getPath());
-
-        wireMockServer.verify(1, postRequestedFor(urlEqualTo("/repos/acme/repo/hooks")));
     }
 
     private String createWorkspace() {

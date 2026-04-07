@@ -181,6 +181,103 @@ describe("StructuredPlanOutput", () => {
     expect(screen.queryByText('"after"')).not.toBeInTheDocument();
   });
 
+  it("hides unchanged sensitive attributes when they only carry sensitivity metadata", () => {
+    render(
+      <StructuredPlanOutput
+        changes={[
+          {
+            address: "aws_secretsmanager_secret_version.example",
+            action: "update",
+            actions: ["update"],
+            before: {
+              secret_string: null,
+            },
+            beforeSensitive: {
+              secret_string: true,
+            },
+            after: {
+              secret_string: null,
+            },
+            afterSensitive: {
+              secret_string: true,
+            },
+          },
+        ]}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /aws_secretsmanager_secret_version\.example/i }));
+
+    expect(screen.getByText("No visible attribute changes.")).toBeInTheDocument();
+    expect(screen.queryByText("secret_string")).not.toBeInTheDocument();
+  });
+
+  it("shows changed sensitive attributes when changed metadata is present", () => {
+    render(
+      <StructuredPlanOutput
+        changes={[
+          {
+            address: "aws_secretsmanager_secret_version.example",
+            action: "update",
+            actions: ["update"],
+            before: {
+              secret_string: null,
+            },
+            beforeSensitive: {
+              secret_string: true,
+            },
+            changedSensitive: {
+              secret_string: true,
+            },
+            after: {
+              secret_string: null,
+            },
+            afterSensitive: {
+              secret_string: true,
+            },
+          },
+        ]}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /aws_secretsmanager_secret_version\.example/i }));
+
+    expect(screen.getByText("secret_string")).toBeInTheDocument();
+    expect(screen.getAllByText("sensitive value")).toHaveLength(2);
+  });
+
+  it("treats a null changedSensitive marker like a missing legacy marker", () => {
+    render(
+      <StructuredPlanOutput
+        changes={[
+          {
+            address: "aws_secretsmanager_secret_version.example",
+            action: "update",
+            actions: ["update"],
+            before: {
+              secret_string: null,
+            },
+            beforeSensitive: {
+              secret_string: true,
+            },
+            changedSensitive: null,
+            after: {
+              secret_string: "known after sanitization drift",
+            },
+            afterSensitive: {
+              secret_string: true,
+            },
+          },
+        ]}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /aws_secretsmanager_secret_version\.example/i }));
+
+    expect(screen.getByText("secret_string")).toBeInTheDocument();
+    expect(screen.getAllByText("sensitive value")).toHaveLength(2);
+  });
+
   it("expands array items so useful child fields are visible", () => {
     render(
       <StructuredPlanOutput

@@ -18,8 +18,11 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Slf4j
 @Service
@@ -114,12 +117,22 @@ public class PlanStructuredOutputService {
             entry.put("resourceName", change.get("name"));
             entry.put("actions", actions);
             entry.put("action", action);
+            Object beforeValue = changeBlock.get("before");
+            Object afterValue = changeBlock.get("after");
             Object beforeSensitive = changeBlock.get("before_sensitive");
             Object afterSensitive = changeBlock.get("after_sensitive");
-            entry.put("before", sanitizeSensitiveValues(changeBlock.get("before"), beforeSensitive));
+            Object changedSensitive = collectChangedSensitivePaths(
+                    beforeValue,
+                    afterValue,
+                    beforeSensitive,
+                    afterSensitive);
+            entry.put("before", sanitizeSensitiveValues(beforeValue, beforeSensitive));
             entry.put("beforeSensitive", beforeSensitive);
-            entry.put("after", sanitizeSensitiveValues(changeBlock.get("after"), afterSensitive));
+            entry.put("after", sanitizeSensitiveValues(afterValue, afterSensitive));
             entry.put("afterSensitive", afterSensitive);
+            if (changedSensitive != null) {
+                entry.put("changedSensitive", changedSensitive);
+            }
             entry.put("afterUnknown", changeBlock.get("after_unknown"));
             result.add(entry);
         }
@@ -345,5 +358,153 @@ public class PlanStructuredOutputService {
         }
 
         return value;
+    }
+
+    // Compare raw values before redaction so the UI can hide unchanged secrets
+    // without losing truly changed sensitive fields.
+    private Object collectChangedSensitivePaths(Object before, Object after, Object beforeSensitive, Object afterSensitive) {
+        if (isSensitiveLeaf(beforeSensitive, afterSensitive)) {
+            if (valuesAreEqual(before, after)) {
+                return null;
+            }
+
+            return true;
+        }
+
+        if (hasMapShape(before, after, beforeSensitive, afterSensitive)) {
+            return collectChangedSensitiveMap(
+                    asMap(before),
+                    asMap(after),
+                    asMap(beforeSensitive),
+                    asMap(afterSensitive));
+        }
+
+        if (hasListShape(before, after, beforeSensitive, afterSensitive)) {
+            return collectChangedSensitiveList(
+                    asList(before),
+                    asList(after),
+                    asList(beforeSensitive),
+                    asList(afterSensitive));
+        }
+
+        return null;
+    }
+
+    private boolean isSensitiveLeaf(Object beforeSensitive, Object afterSensitive) {
+        return Boolean.TRUE.equals(beforeSensitive) || Boolean.TRUE.equals(afterSensitive);
+    }
+
+    private boolean hasMapShape(Object before, Object after, Object beforeSensitive, Object afterSensitive) {
+        return before instanceof Map<?, ?>
+                || after instanceof Map<?, ?>
+                || beforeSensitive instanceof Map<?, ?>
+                || afterSensitive instanceof Map<?, ?>;
+    }
+
+    private boolean hasListShape(Object before, Object after, Object beforeSensitive, Object afterSensitive) {
+        return before instanceof List<?>
+                || after instanceof List<?>
+                || beforeSensitive instanceof List<?>
+                || afterSensitive instanceof List<?>;
+    }
+
+    private Map<?, ?> asMap(Object value) {
+        if (value instanceof Map<?, ?> map) {
+            return map;
+        }
+
+        return Map.of();
+    }
+
+    private List<?> asList(Object value) {
+        if (value instanceof List<?> list) {
+            return list;
+        }
+
+        return List.of();
+    }
+
+    private Object collectChangedSensitiveMap(
+            Map<?, ?> beforeMap,
+            Map<?, ?> afterMap,
+            Map<?, ?> beforeSensitiveMap,
+            Map<?, ?> afterSensitiveMap) {
+        Map<String, Object> changedSensitivePaths = new LinkedHashMap<>();
+
+        for (String key : collectChangedSensitiveKeys(beforeMap, afterMap, beforeSensitiveMap, afterSensitiveMap)) {
+            Object changedChild = collectChangedSensitivePaths(
+                    beforeMap.get(key),
+                    afterMap.get(key),
+                    beforeSensitiveMap.get(key),
+                    afterSensitiveMap.get(key));
+            if (changedChild != null) {
+                changedSensitivePaths.put(key, changedChild);
+            }
+        }
+
+        if (changedSensitivePaths.isEmpty()) {
+            return null;
+        }
+
+        return changedSensitivePaths;
+    }
+
+    private Set<String> collectChangedSensitiveKeys(
+            Map<?, ?> beforeMap,
+            Map<?, ?> afterMap,
+            Map<?, ?> beforeSensitiveMap,
+            Map<?, ?> afterSensitiveMap) {
+        Set<String> keys = new LinkedHashSet<>();
+        addMapKeys(keys, beforeMap);
+        addMapKeys(keys, afterMap);
+        addMapKeys(keys, beforeSensitiveMap);
+        addMapKeys(keys, afterSensitiveMap);
+        return keys;
+    }
+
+    private void addMapKeys(Set<String> keys, Map<?, ?> map) {
+        map.keySet().forEach((key) -> keys.add(String.valueOf(key)));
+    }
+
+    private Object collectChangedSensitiveList(
+            List<?> beforeList,
+            List<?> afterList,
+            List<?> beforeSensitiveList,
+            List<?> afterSensitiveList) {
+        int maxLength = Math.max(
+                Math.max(beforeList.size(), afterList.size()),
+                Math.max(beforeSensitiveList.size(), afterSensitiveList.size()));
+        List<Object> changedSensitivePaths = new ArrayList<>();
+        boolean hasChanges = false;
+
+        for (int index = 0; index < maxLength; index++) {
+            Object changedChild = collectChangedSensitivePaths(
+                    getListValue(beforeList, index),
+                    getListValue(afterList, index),
+                    getListValue(beforeSensitiveList, index),
+                    getListValue(afterSensitiveList, index));
+            changedSensitivePaths.add(changedChild);
+            if (changedChild != null) {
+                hasChanges = true;
+            }
+        }
+
+        if (!hasChanges) {
+            return null;
+        }
+
+        return changedSensitivePaths;
+    }
+
+    private Object getListValue(List<?> list, int index) {
+        if (index >= list.size()) {
+            return null;
+        }
+
+        return list.get(index);
+    }
+
+    private boolean valuesAreEqual(Object left, Object right) {
+        return objectMapper.valueToTree(left).equals(objectMapper.valueToTree(right));
     }
 }

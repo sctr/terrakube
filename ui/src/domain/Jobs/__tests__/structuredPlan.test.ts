@@ -18,6 +18,7 @@ describe("structuredPlan helpers", () => {
           address: "aws_instance.example",
           actions: ["update"],
           beforeSensitive: { password: true },
+          changedSensitive: { password: true },
           afterSensitive: { password: true },
         },
         "invalid-entry",
@@ -31,6 +32,7 @@ describe("structuredPlan helpers", () => {
         address: "aws_instance.example",
         action: "update",
         beforeSensitive: { password: true },
+        changedSensitive: { password: true },
         afterSensitive: { password: true },
       })
     );

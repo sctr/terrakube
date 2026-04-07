@@ -31,6 +31,15 @@ type CollectionEntry = {
   unknown: unknown;
   beforeSensitive: unknown;
   afterSensitive: unknown;
+  changedSensitive: unknown;
+};
+
+type BuildCollectionEntriesArgs = {
+  values: unknown[];
+  unknownValues?: unknown[];
+  beforeSensitiveValues?: unknown[];
+  afterSensitiveValues?: unknown[];
+  changedSensitiveValues?: unknown[];
 };
 
 type DiffResult = {
@@ -333,12 +342,13 @@ const canMatchCollectionByIdentity = (values: unknown[]) => {
   return new Set(identities).size === identities.length;
 };
 
-const buildCollectionEntries = (
-  values: unknown[],
-  unknownValues: unknown[],
-  beforeSensitiveValues: unknown[],
-  afterSensitiveValues: unknown[]
-) => {
+const buildCollectionEntries = ({
+  values,
+  unknownValues = [],
+  beforeSensitiveValues = [],
+  afterSensitiveValues = [],
+  changedSensitiveValues = [],
+}: BuildCollectionEntriesArgs) => {
   const entries = new Map<string, CollectionEntry>();
 
   values.forEach((value, index) => {
@@ -349,10 +359,33 @@ const buildCollectionEntries = (
       unknown: unknownValues[index],
       beforeSensitive: beforeSensitiveValues[index],
       afterSensitive: afterSensitiveValues[index],
+      changedSensitive: changedSensitiveValues[index],
     });
   });
 
   return entries;
+};
+
+const shouldRenderSensitiveDiff = (
+  before: unknown,
+  after: unknown,
+  beforeSensitive: unknown,
+  afterSensitive: unknown,
+  changedSensitive: unknown
+) => {
+  const hasSensitiveMetadata = beforeSensitive === true || afterSensitive === true;
+
+  if (changedSensitive === true) {
+    return true;
+  }
+
+  // Older structured-plan payloads only include *_sensitive metadata, so fall
+  // back to the sanitized values already in the browser for those responses.
+  if (changedSensitive == null && hasSensitiveMetadata && !areValuesEqual(before, after)) {
+    return true;
+  }
+
+  return false;
 };
 
 const buildDiffRows = (
@@ -361,9 +394,10 @@ const buildDiffRows = (
   afterUnknown: unknown,
   beforeSensitive: unknown,
   afterSensitive: unknown,
+  changedSensitive: unknown,
   label = "resource"
 ): DiffResult => {
-  const isSensitive = beforeSensitive === true || afterSensitive === true;
+  const isSensitive = shouldRenderSensitiveDiff(before, after, beforeSensitive, afterSensitive, changedSensitive);
   const isUnknown = afterUnknown === true;
 
   if (isSensitive) {
@@ -402,6 +436,7 @@ const buildDiffRows = (
     const unknownArray = Array.isArray(afterUnknown) ? afterUnknown : [];
     const beforeSensitiveArray = Array.isArray(beforeSensitive) ? beforeSensitive : [];
     const afterSensitiveArray = Array.isArray(afterSensitive) ? afterSensitive : [];
+    const changedSensitiveArray = Array.isArray(changedSensitive) ? changedSensitive : [];
 
     const rows: DiffRow[] = [];
     let hiddenCount = 0;
@@ -413,8 +448,21 @@ const buildDiffRows = (
       canMatchCollectionByIdentity(afterArray);
 
     if (canUseIdentityMatching) {
-      const beforeEntries = buildCollectionEntries(beforeArray, [], beforeSensitiveArray, []);
-      const afterEntries = buildCollectionEntries(afterArray, unknownArray, [], afterSensitiveArray);
+      const beforeEntries = buildCollectionEntries({
+        values: beforeArray,
+        beforeSensitiveValues: beforeSensitiveArray,
+      });
+      const afterEntries = buildCollectionEntries({
+        values: afterArray,
+        unknownValues: unknownArray,
+        afterSensitiveValues: afterSensitiveArray,
+      });
+      // `changedSensitive` arrives as a parallel array, so rebuild entry
+      // identities from whichever side still has the collection items.
+      const changedSensitiveEntries = buildCollectionEntries({
+        values: afterArray.length > 0 ? afterArray : beforeArray,
+        changedSensitiveValues: changedSensitiveArray,
+      });
       const orderedIdentities = Array.from(new Set([...beforeEntries.keys(), ...afterEntries.keys()]));
 
       orderedIdentities.forEach((identity, index) => {
@@ -428,6 +476,7 @@ const buildDiffRows = (
           afterEntry?.unknown,
           beforeEntry?.beforeSensitive,
           afterEntry?.afterSensitive,
+          changedSensitiveEntries.get(identity)?.changedSensitive,
           itemLabel
         );
 
@@ -466,6 +515,7 @@ const buildDiffRows = (
           unknownArray[index],
           beforeSensitiveArray[index],
           afterSensitiveArray[index],
+          changedSensitiveArray[index],
           itemLabel
         );
 
@@ -535,6 +585,7 @@ const buildDiffRows = (
   const unknownRecord = isRecord(afterUnknown) ? afterUnknown : {};
   const beforeSensitiveRecord = isRecord(beforeSensitive) ? beforeSensitive : {};
   const afterSensitiveRecord = isRecord(afterSensitive) ? afterSensitive : {};
+  const changedSensitiveRecord = isRecord(changedSensitive) ? changedSensitive : {};
 
   const keys = Array.from(new Set([...Object.keys(beforeRecord), ...Object.keys(afterRecord)])).sort();
   const rows: DiffRow[] = [];
@@ -547,6 +598,7 @@ const buildDiffRows = (
       unknownRecord[key],
       beforeSensitiveRecord[key],
       afterSensitiveRecord[key],
+      changedSensitiveRecord[key],
       key
     );
 
@@ -760,14 +812,21 @@ const isDataSourceChange = (change: PlanChange, action: ActionName) => {
 
 const buildResourceDiff = (change: PlanChange, action: ActionName) => {
   if (action === "create") {
-    return buildDiffRows(undefined, change.after, change.afterUnknown, undefined, change.afterSensitive);
+    return buildDiffRows(undefined, change.after, change.afterUnknown, undefined, change.afterSensitive, change.changedSensitive);
   }
 
   if (action === "delete") {
-    return buildDiffRows(change.before, undefined, undefined, change.beforeSensitive, undefined);
+    return buildDiffRows(change.before, undefined, undefined, change.beforeSensitive, undefined, change.changedSensitive);
   }
 
-  return buildDiffRows(change.before, change.after, change.afterUnknown, change.beforeSensitive, change.afterSensitive);
+  return buildDiffRows(
+    change.before,
+    change.after,
+    change.afterUnknown,
+    change.beforeSensitive,
+    change.afterSensitive,
+    change.changedSensitive
+  );
 };
 
 const buildSummary = (rows: PreparedChangeRow[]): SummaryCounts => {

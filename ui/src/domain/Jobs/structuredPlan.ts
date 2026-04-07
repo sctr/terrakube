@@ -7,6 +7,7 @@ export type PlanChange = {
   actions?: string[];
   before?: unknown;
   beforeSensitive?: unknown;
+  changedSensitive?: unknown;
   after?: unknown;
   afterSensitive?: unknown;
   afterUnknown?: unknown;
@@ -120,6 +121,7 @@ const normalizePlanChange = (value: unknown): PlanChange | null => {
     actions,
     before: value.before,
     beforeSensitive: value.beforeSensitive,
+    changedSensitive: value.changedSensitive,
     after: value.after,
     afterSensitive: value.afterSensitive,
     afterUnknown: value.afterUnknown,

@@ -110,6 +110,49 @@ class PlanStructuredOutputServiceTest {
         assertNull(beforeVariables.get(0).get("value"));
         assertEquals("CONSUMER_COUNT", afterVariables.get(0).get("name"));
         assertNull(afterVariables.get(0).get("value"));
+        assertEquals(
+                Map.of("variables", List.of(Map.of("value", true))),
+                changes.get(0).get("changedSensitive"));
+    }
+
+    @Test
+    void ignoresUnchangedSensitiveValuesWhenBuildingStructuredPlanPayload() throws Exception {
+        String json = """
+                {
+                  "resource_changes": [
+                    {
+                      "address": "aws_secretsmanager_secret_version.example",
+                      "type": "aws_secretsmanager_secret_version",
+                      "name": "example",
+                      "change": {
+                        "actions": ["update"],
+                        "before": {
+                          "secret_string": "same"
+                        },
+                        "before_sensitive": {
+                          "secret_string": true
+                        },
+                        "after": {
+                          "secret_string": "same"
+                        },
+                        "after_sensitive": {
+                          "secret_string": true
+                        },
+                        "after_unknown": {}
+                      }
+                    }
+                  ]
+                }
+                """;
+
+        List<Map<String, Object>> changes = subject().buildChangesFromPlanJson(json);
+
+        Map<String, Object> before = (Map<String, Object>) changes.get(0).get("before");
+        Map<String, Object> after = (Map<String, Object>) changes.get(0).get("after");
+
+        assertNull(before.get("secret_string"));
+        assertNull(after.get("secret_string"));
+        assertNull(changes.get(0).get("changedSensitive"));
     }
 
     @Test

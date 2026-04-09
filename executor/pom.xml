@@ -39,6 +39,7 @@
 		</sonar.coverage.jacoco.xmlReportPaths>
 		<!--BUILDPACK DATA-->
 		<buildpack.builder>paketobuildpacks/builder-jammy-base:0.4.546</buildpack.builder>
+		<buildpack.environmentVariables>urn:cnb:builder:paketo-buildpacks/environment-variables</buildpack.environmentVariables>
 		<buildpack.java>paketobuildpacks/java:21.2.0</buildpack.java>
 		<buildpack.telemetry>paketobuildpacks/opentelemetry:2.23.0</buildpack.telemetry>
 	</properties>
@@ -220,6 +221,7 @@
 					<image>
 					    <builder>${buildpack.builder}</builder>
                     	<buildpacks>
+													<buildpack>${buildpack.environmentVariables}</buildpack>
                         	<buildpack>${buildpack.java}</buildpack>
                         	<buildpack>${buildpack.telemetry}</buildpack>
                     	</buildpacks>
@@ -228,7 +230,9 @@
                     	</bindings>
                     <env>
                         <BP_OPENTELEMETRY_ENABLED>true</BP_OPENTELEMETRY_ENABLED>
-						<BP_JVM_VERSION>25</BP_JVM_VERSION>
+												<BPE_DEFAULT_LANG>C.UTF-8</BPE_DEFAULT_LANG>
+												<BPE_DEFAULT_LC_ALL>C.UTF-8</BPE_DEFAULT_LC_ALL>
+												<BP_JVM_VERSION>25</BP_JVM_VERSION>
                     </env>
                 	</image>
 				</configuration>

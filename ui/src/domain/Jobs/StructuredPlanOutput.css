@@ -495,6 +495,11 @@
   border-color: #dae6ff;
 }
 
+.structured-plan-diffRow--unchanged {
+  background: #ffffff;
+  border-color: #edf1f6;
+}
+
 .structured-plan-diffRow--unknown {
   background: #fffaf0;
   border-color: #f5dfb2;
@@ -540,6 +545,11 @@
 .structured-plan-diffMarker--changed {
   background: #dde8ff;
   color: #2563eb;
+}
+
+.structured-plan-diffMarker--unchanged {
+  background: transparent;
+  color: transparent;
 }
 
 .structured-plan-diffMarker--unknown {
@@ -605,6 +615,11 @@
 .structured-plan-valueToken--changed {
   border-color: #dae6ff;
   color: #1d4ed8;
+}
+
+.structured-plan-valueToken--unchanged {
+  border-color: #d8dde6;
+  color: #526171;
 }
 
 .structured-plan-valueToken--unknown {

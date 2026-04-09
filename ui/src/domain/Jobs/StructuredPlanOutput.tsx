@@ -14,15 +14,18 @@ type Props = {
 
 type ActionName = "create" | "update" | "replace" | "delete" | "read" | "unknown" | "no-op";
 type ActionFilter = "all" | "create" | "update" | "replace" | "delete" | "read";
+type DiffLeafKind = "added" | "removed" | "changed" | "unknown" | "sensitive" | "unchanged";
+type HiddenEntityKind = "attribute" | "element";
 
 type DiffRow = {
   key: string;
   label: string;
-  kind: "group" | "added" | "removed" | "changed" | "unknown" | "sensitive";
+  kind: "group" | DiffLeafKind;
   before?: unknown;
   after?: unknown;
   children?: DiffRow[];
   hiddenCount?: number;
+  hiddenKind?: HiddenEntityKind;
 };
 
 type CollectionEntry = {
@@ -45,6 +48,25 @@ type BuildCollectionEntriesArgs = {
 type DiffResult = {
   rows: DiffRow[];
   hiddenCount: number;
+  hiddenKind?: HiddenEntityKind;
+};
+
+type BuildDiffRowsOptions = {
+  showUnchangedChildren?: boolean;
+};
+
+type CollectionItemCandidate = {
+  key: string;
+  itemLabel: string;
+  displayLabel: string;
+  before: unknown;
+  after: unknown;
+  afterUnknown: unknown;
+  beforeSensitive: unknown;
+  afterSensitive: unknown;
+  changedSensitive: unknown;
+  compactDiff: DiffResult;
+  isUnchanged: boolean;
 };
 
 type SummaryCounts = {
@@ -140,6 +162,10 @@ const providerIconMap = {
   discord: FaDiscord,
 };
 
+// Match Terraform's human renderer so the structured UI keeps the same
+// unchanged context as the CLI and Terraform Cloud.
+const terraformImportantAttributes = new Set(["id", "name", "tags"]);
+
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   if (value === null) {
     return false;
@@ -201,6 +227,10 @@ const getPluralSuffix = (count: number) => {
   return "s";
 };
 
+const getHiddenSummaryLabel = (count: number, kind: HiddenEntityKind = "attribute") => {
+  return `${count} unchanged ${kind}${getPluralSuffix(count)} hidden`;
+};
+
 const getValuePreview = (value: unknown) => {
   if (value === undefined) {
     return "not set";
@@ -246,11 +276,7 @@ const getValuePreview = (value: unknown) => {
   return String(value);
 };
 
-const renderValueToken = (
-  value: unknown,
-  kind: Exclude<DiffRow["kind"], "group">,
-  options?: { sensitive?: boolean; unknown?: boolean }
-) => {
+const renderValueToken = (value: unknown, kind: DiffLeafKind, options?: { sensitive?: boolean; unknown?: boolean }) => {
   let label = getValuePreview(value);
 
   if (options?.sensitive) {
@@ -267,11 +293,34 @@ const renderValueToken = (
 const countVisibleLeaves = (rows: DiffRow[]): number => {
   return rows.reduce((total, row) => {
     if (!row.children?.length) {
+      if (row.kind === "unchanged") {
+        return total;
+      }
+
       return total + 1;
     }
 
     return total + countVisibleLeaves(row.children);
   }, 0);
+};
+
+const isTerraformImportantAttribute = (key: string) => {
+  return terraformImportantAttributes.has(key);
+};
+
+const buildUnchangedDiffResult = (label: string, value: unknown): DiffResult => {
+  return {
+    rows: [
+      {
+        key: label,
+        label,
+        kind: "unchanged",
+        before: value,
+        after: value,
+      },
+    ],
+    hiddenCount: 0,
+  };
 };
 
 const getCollectionItemLabel = (before: unknown, after: unknown, index: number) => {
@@ -395,8 +444,10 @@ const buildDiffRows = (
   beforeSensitive: unknown,
   afterSensitive: unknown,
   changedSensitive: unknown,
-  label = "resource"
+  label = "resource",
+  options: BuildDiffRowsOptions = {}
 ): DiffResult => {
+  const { showUnchangedChildren = false } = options;
   const isSensitive = shouldRenderSensitiveDiff(before, after, beforeSensitive, afterSensitive, changedSensitive);
   const isUnknown = afterUnknown === true;
 
@@ -441,6 +492,42 @@ const buildDiffRows = (
     const rows: DiffRow[] = [];
     let hiddenCount = 0;
 
+    const buildCollectionRow = (candidate: CollectionItemCandidate, diff: DiffResult) => {
+      if (diff.rows.length === 0) {
+        return null;
+      }
+
+      if (diff.rows.length === 1 && !diff.rows[0].children?.length && diff.rows[0].label === candidate.itemLabel) {
+        return diff.rows[0];
+      }
+
+      return {
+        key: candidate.key,
+        label: candidate.displayLabel,
+        kind: "group" as const,
+        children: diff.rows,
+        hiddenCount: diff.hiddenCount,
+        hiddenKind: diff.hiddenKind,
+      };
+    };
+
+    const buildExpandedCollectionDiff = (candidate: CollectionItemCandidate) => {
+      return buildDiffRows(
+        candidate.before,
+        candidate.after,
+        candidate.afterUnknown,
+        candidate.beforeSensitive,
+        candidate.afterSensitive,
+        candidate.changedSensitive,
+        candidate.itemLabel,
+        {
+          showUnchangedChildren: true,
+        }
+      );
+    };
+
+    const collectionCandidates: CollectionItemCandidate[] = [];
+
     const canUseIdentityMatching =
       beforeArray.every((item) => isRecord(item)) &&
       afterArray.every((item) => isRecord(item)) &&
@@ -477,30 +564,25 @@ const buildDiffRows = (
           beforeEntry?.beforeSensitive,
           afterEntry?.afterSensitive,
           changedSensitiveEntries.get(identity)?.changedSensitive,
-          itemLabel
+          itemLabel,
+          {
+            showUnchangedChildren,
+          }
         );
 
-        hiddenCount += childDiff.hiddenCount;
-
-        if (childDiff.rows.length === 0) {
-          return;
-        }
-
-        if (
-          childDiff.rows.length === 1 &&
-          !childDiff.rows[0].children?.length &&
-          childDiff.rows[0].label === itemLabel
-        ) {
-          rows.push(childDiff.rows[0]);
-          return;
-        }
-
-        rows.push({
+        const visibleChildChanges = countVisibleLeaves(childDiff.rows);
+        collectionCandidates.push({
           key: identity,
-          label: itemDisplayLabel,
-          kind: "group",
-          children: childDiff.rows,
-          hiddenCount: childDiff.hiddenCount,
+          itemLabel,
+          displayLabel: itemDisplayLabel,
+          before: beforeEntry?.value,
+          after: afterEntry?.value,
+          afterUnknown: afterEntry?.unknown,
+          beforeSensitive: beforeEntry?.beforeSensitive,
+          afterSensitive: afterEntry?.afterSensitive,
+          changedSensitive: changedSensitiveEntries.get(identity)?.changedSensitive,
+          compactDiff: childDiff,
+          isUnchanged: visibleChildChanges === 0 && areValuesEqual(beforeEntry?.value, afterEntry?.value),
         });
       });
     } else {
@@ -516,46 +598,111 @@ const buildDiffRows = (
           beforeSensitiveArray[index],
           afterSensitiveArray[index],
           changedSensitiveArray[index],
-          itemLabel
+          itemLabel,
+          {
+            showUnchangedChildren,
+          }
         );
 
-        hiddenCount += childDiff.hiddenCount;
-
-        if (childDiff.rows.length === 0) {
-          continue;
-        }
-
-        if (
-          childDiff.rows.length === 1 &&
-          !childDiff.rows[0].children?.length &&
-          childDiff.rows[0].label === itemLabel
-        ) {
-          rows.push(childDiff.rows[0]);
-          continue;
-        }
-
-        rows.push({
+        const visibleChildChanges = countVisibleLeaves(childDiff.rows);
+        collectionCandidates.push({
           key: itemLabel,
-          label: itemDisplayLabel,
-          kind: "group",
-          children: childDiff.rows,
-          hiddenCount: childDiff.hiddenCount,
+          itemLabel,
+          displayLabel: itemDisplayLabel,
+          before: beforeArray[index],
+          after: afterArray[index],
+          afterUnknown: unknownArray[index],
+          beforeSensitive: beforeSensitiveArray[index],
+          afterSensitive: afterSensitiveArray[index],
+          changedSensitive: changedSensitiveArray[index],
+          compactDiff: childDiff,
+          isUnchanged: visibleChildChanges === 0 && areValuesEqual(beforeArray[index], afterArray[index]),
         });
       }
+    }
+
+    if (showUnchangedChildren) {
+      collectionCandidates.forEach((candidate) => {
+        const row = buildCollectionRow(candidate, candidate.compactDiff);
+        if (!row) {
+          return;
+        }
+
+        rows.push(row);
+      });
+    } else {
+      let pendingUnchanged: CollectionItemCandidate[] = [];
+      let renderNextUnchanged = false;
+
+      collectionCandidates.forEach((candidate) => {
+        if (candidate.isUnchanged && !renderNextUnchanged) {
+          pendingUnchanged.push(candidate);
+          return;
+        }
+
+        renderNextUnchanged = false;
+
+        if (pendingUnchanged.length > 1) {
+          hiddenCount += pendingUnchanged.length - 1;
+        }
+
+        if (pendingUnchanged.length > 0) {
+          const previousContextCandidate = pendingUnchanged[pendingUnchanged.length - 1];
+          const previousContextRow = buildCollectionRow(
+            previousContextCandidate,
+            buildExpandedCollectionDiff(previousContextCandidate)
+          );
+
+          if (previousContextRow) {
+            rows.push(previousContextRow);
+          }
+        }
+
+        pendingUnchanged = [];
+
+        if (candidate.isUnchanged) {
+          const nextContextRow = buildCollectionRow(candidate, buildExpandedCollectionDiff(candidate));
+          if (nextContextRow) {
+            rows.push(nextContextRow);
+          }
+          return;
+        }
+
+        const changedRow = buildCollectionRow(candidate, candidate.compactDiff);
+        if (changedRow) {
+          rows.push(changedRow);
+        }
+
+        renderNextUnchanged = true;
+      });
+
+      if (pendingUnchanged.length > 0) {
+        hiddenCount += pendingUnchanged.length;
+      }
+    }
+
+    if (showUnchangedChildren && rows.length === 0 && areValuesEqual(beforeArray, afterArray)) {
+      return buildUnchangedDiffResult(label, afterArray);
     }
 
     return {
       rows,
       hiddenCount,
+      hiddenKind: "element",
     };
   }
 
   const treatAsLeaf = isPrimitiveValue(before) || isPrimitiveValue(after);
   if (treatAsLeaf) {
     if (areValuesEqual(before, after)) {
+      if (showUnchangedChildren) {
+        return buildUnchangedDiffResult(label, after === undefined ? before : after);
+      }
+
       return {
         rows: [],
         hiddenCount: 1,
+        hiddenKind: "attribute",
       };
     }
 
@@ -599,12 +746,14 @@ const buildDiffRows = (
       beforeSensitiveRecord[key],
       afterSensitiveRecord[key],
       changedSensitiveRecord[key],
-      key
+      key,
+      {
+        showUnchangedChildren: showUnchangedChildren || isTerraformImportantAttribute(key),
+      }
     );
 
-    hiddenCount += childDiff.hiddenCount;
-
     if (childDiff.rows.length === 0) {
+      hiddenCount += 1;
       return;
     }
 
@@ -612,8 +761,8 @@ const buildDiffRows = (
       childDiff.rows.length === 1 &&
       !childDiff.rows[0].children?.length &&
       childDiff.rows[0].label === key &&
-      !isCollectionValue(beforeRecord[key]) &&
-      !isCollectionValue(afterRecord[key])
+      ((!isCollectionValue(beforeRecord[key]) && !isCollectionValue(afterRecord[key])) ||
+        childDiff.rows[0].kind === "unchanged")
     ) {
       rows.push(childDiff.rows[0]);
       return;
@@ -625,18 +774,28 @@ const buildDiffRows = (
       kind: "group",
       children: childDiff.rows,
       hiddenCount: childDiff.hiddenCount,
+      hiddenKind: childDiff.hiddenKind,
     });
   });
+
+  if (showUnchangedChildren && rows.length === 0 && areValuesEqual(beforeRecord, afterRecord)) {
+    return buildUnchangedDiffResult(label, after === undefined ? before : after);
+  }
 
   return {
     rows,
     hiddenCount,
+    hiddenKind: "attribute",
   };
 };
 
 const getDiffMarker = (kind: Exclude<DiffRow["kind"], "group">) => {
   if (kind === "added") {
     return "+";
+  }
+
+  if (kind === "unchanged") {
+    return "";
   }
 
   if (kind === "removed") {
@@ -664,9 +823,7 @@ const renderDiffRows = (rows: DiffRow[], parentKey = "root"): ReactNode => {
           <div className="structured-plan-diffGroupLabel">{row.label}</div>
           <div className="structured-plan-diffGroupChildren">{renderDiffRows(row.children, rowKey)}</div>
           {row.hiddenCount ? (
-            <div className="structured-plan-hiddenCount">
-              {row.hiddenCount} unchanged attribute{getPluralSuffix(row.hiddenCount)} hidden
-            </div>
+            <div className="structured-plan-hiddenCount">{getHiddenSummaryLabel(row.hiddenCount, row.hiddenKind)}</div>
           ) : null}
         </div>
       );
@@ -812,11 +969,25 @@ const isDataSourceChange = (change: PlanChange, action: ActionName) => {
 
 const buildResourceDiff = (change: PlanChange, action: ActionName) => {
   if (action === "create") {
-    return buildDiffRows(undefined, change.after, change.afterUnknown, undefined, change.afterSensitive, change.changedSensitive);
+    return buildDiffRows(
+      undefined,
+      change.after,
+      change.afterUnknown,
+      undefined,
+      change.afterSensitive,
+      change.changedSensitive
+    );
   }
 
   if (action === "delete") {
-    return buildDiffRows(change.before, undefined, undefined, change.beforeSensitive, undefined, change.changedSensitive);
+    return buildDiffRows(
+      change.before,
+      undefined,
+      undefined,
+      change.beforeSensitive,
+      undefined,
+      change.changedSensitive
+    );
   }
 
   return buildDiffRows(
@@ -1273,9 +1444,7 @@ export const StructuredPlanOutput = ({ changes, outputLog }: Props) => {
                               {row.visibleChanges} visible change{getPluralSuffix(row.visibleChanges)}
                             </span>
                             {row.hiddenCount ? (
-                              <span>
-                                {row.hiddenCount} unchanged attribute{getPluralSuffix(row.hiddenCount)} hidden
-                              </span>
+                              <span>{getHiddenSummaryLabel(row.hiddenCount, row.diff.hiddenKind)}</span>
                             ) : null}
                           </div>
                         </div>

@@ -60,7 +60,7 @@ class WebhookTests extends ServerApplicationTests {
                         "Content-Type", ATOMIC_CONTENT_TYPE,
                         "Accept", ATOMIC_CONTENT_TYPE
                 )
-                .body(buildRequestBody(workspaceId, webhookId, eventId, "bang/*", "\"pathType\": \"PATTERN\","))
+                .body(buildRequestBody(workspaceId, webhookId, eventId, "bang/*", "\"pathType\": \"PATTERN\",", false))
                 .when()
                 .post("/api/v1/operations")
                 .then()
@@ -72,6 +72,7 @@ class WebhookTests extends ServerApplicationTests {
                 .orElseThrow(() -> new IllegalStateException("Webhook was not persisted"));
 
         Assertions.assertEquals("123456", persistedWebhook.getRemoteHookId());
+        Assertions.assertFalse(persistedWebhook.isPrPreviewTargetBranch());
 
         List<WebhookEvent> persistedEvents = webhookEventRepository
                 .findByWebhookAndEventOrderByPriorityAsc(persistedWebhook, WebhookEventType.PUSH);
@@ -97,7 +98,7 @@ class WebhookTests extends ServerApplicationTests {
                         "Content-Type", ATOMIC_CONTENT_TYPE,
                         "Accept", ATOMIC_CONTENT_TYPE
                 )
-                .body(buildRequestBody(workspaceId, webhookId, eventId, "^bang/.+", ""))
+                .body(buildRequestBody(workspaceId, webhookId, eventId, "^bang/.+", "", false))
                 .when()
                 .post("/api/v1/operations")
                 .then()
@@ -109,6 +110,7 @@ class WebhookTests extends ServerApplicationTests {
                 .orElseThrow(() -> new IllegalStateException("Webhook was not persisted"));
 
         Assertions.assertEquals("123456", persistedWebhook.getRemoteHookId());
+        Assertions.assertFalse(persistedWebhook.isPrPreviewTargetBranch());
 
         List<WebhookEvent> persistedEvents = webhookEventRepository
                 .findByWebhookAndEventOrderByPriorityAsc(persistedWebhook, WebhookEventType.PUSH);
@@ -120,6 +122,32 @@ class WebhookTests extends ServerApplicationTests {
         wireMockServer.verify(1, postRequestedFor(urlEqualTo("/repos/acme/repo/hooks")));
     }
 
+    @Test
+    void createWebhookFromAtomicOperationsPersistsPrPreviewTargetBranch() {
+        String workspaceId = createWorkspace();
+        stubGithubWebhookCreation();
+
+        String webhookId = UUID.randomUUID().toString();
+        String eventId = UUID.randomUUID().toString();
+
+        given()
+                .headers(
+                        "Authorization", "Bearer " + generatePAT("TERRAKUBE_DEVELOPERS"),
+                        "Content-Type", ATOMIC_CONTENT_TYPE,
+                        "Accept", ATOMIC_CONTENT_TYPE
+                )
+                .body(buildRequestBody(workspaceId, webhookId, eventId, "terraform/*", "\"pathType\": \"PATTERN\",", true))
+                .when()
+                .post("/api/v1/operations")
+                .then()
+                .statusCode(HttpStatus.OK.value());
+
+        Webhook persistedWebhook = webhookRepository.findById(UUID.fromString(webhookId))
+                .orElseThrow(() -> new IllegalStateException("Webhook was not persisted"));
+
+        Assertions.assertTrue(persistedWebhook.isPrPreviewTargetBranch());
+    }
+
     private void stubGithubWebhookCreation() {
         wireMockServer.stubFor(post(urlEqualTo("/repos/acme/repo/hooks"))
                 .willReturn(aResponse()
@@ -128,7 +156,8 @@ class WebhookTests extends ServerApplicationTests {
                         .withBody("{\"id\":\"123456\"}")));
     }
 
-    private String buildRequestBody(String workspaceId, String webhookId, String eventId, String path, String pathTypeField) {
+    private String buildRequestBody(String workspaceId, String webhookId, String eventId, String path,
+            String pathTypeField, boolean prPreviewTargetBranch) {
         return """
                 {
                   "atomic:operations": [
@@ -137,7 +166,10 @@ class WebhookTests extends ServerApplicationTests {
                       "href": "/organization/%s/workspace/%s/webhook",
                       "data": {
                         "type": "webhook",
-                        "id": "%s"
+                        "id": "%s",
+                        "attributes": {
+                          "prPreviewTargetBranch": %s
+                        }
                       },
                       "relationships": {
                         "events": {
@@ -173,6 +205,7 @@ class WebhookTests extends ServerApplicationTests {
                 ORGANIZATION_ID,
                 workspaceId,
                 webhookId,
+                prPreviewTargetBranch,
                 eventId,
                 ORGANIZATION_ID,
                 workspaceId,

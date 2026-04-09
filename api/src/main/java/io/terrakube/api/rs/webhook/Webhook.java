@@ -41,6 +41,9 @@ public class Webhook extends GenericAuditFields {
     @Column(name = "remote_hook_id")
     private String remoteHookId;
 
+    @Column(name = "pr_preview_target_branch")
+    private boolean prPreviewTargetBranch = false;
+
     @OneToOne(fetch = FetchType.LAZY, optional = false)
     private Workspace workspace;
     

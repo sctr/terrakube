@@ -130,6 +130,7 @@ public class BitBucketWebhookService extends WebhookServiceBase {
 
             String sourceBranch = pullRequestNode.path("source").path("branch").path("name").asText();
             result.setBranch(sourceBranch);
+            result.setTargetBranch(pullRequestNode.path("destination").path("branch").path("name").asText());
 
             result.setCreatedBy("no-reply@terrakube.io");
 
@@ -207,6 +208,7 @@ public class BitBucketWebhookService extends WebhookServiceBase {
             JsonNode pullRequestNode = rootNode.path("pullrequest");
             result.setPrNumber(pullRequestNode.path("id").asInt());
             result.setBranch(pullRequestNode.path("source").path("branch").path("name").asText());
+            result.setTargetBranch(pullRequestNode.path("destination").path("branch").path("name").asText());
             result.setCommit(pullRequestNode.path("source").path("commit").path("hash").asText());
 
             JsonNode linksNode = pullRequestNode.path("links");

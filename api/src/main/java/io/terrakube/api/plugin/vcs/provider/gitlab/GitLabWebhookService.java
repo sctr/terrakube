@@ -150,6 +150,7 @@ public class GitLabWebhookService extends WebhookServiceBase {
                 case "update":
                     log.info("New merge request {}: {}", action, mrModel.getObjectAttributes().getTitle());
                     result.setBranch(mrModel.getObjectAttributes().getSourceBranch());
+                    result.setTargetBranch(mrModel.getObjectAttributes().getTargetBranch());
                     result.setCreatedBy("system");
 
                     if (mrModel.getObjectAttributes().getLastCommit() != null) {
@@ -206,6 +207,7 @@ public class GitLabWebhookService extends WebhookServiceBase {
 
             JsonNode mrNode = rootNode.path("merge_request");
             result.setBranch(mrNode.path("source_branch").asText());
+            result.setTargetBranch(mrNode.path("target_branch").asText());
             result.setPrNumber(mrNode.path("iid").asInt());
 
             if (mrNode.has("last_commit")) {

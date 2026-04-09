@@ -369,6 +369,7 @@ export type Webhook = {
 };
 export type WebhookAttributes = {
   remoteHookId: string;
+  prPreviewTargetBranch?: boolean;
 };
 export enum WebhookEventType {
   PUSH = "PUSH",

@@ -14,6 +14,7 @@ import java.util.List;
 public class WebhookResult {
     private String workspaceId;
     private String branch;
+    private String targetBranch;
     private boolean isValid;
     private String event;
     private String createdBy;

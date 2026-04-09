@@ -356,6 +356,7 @@ public class VcsGitlabTests extends ServerApplicationTests {
 
         Assert.isTrue(webhookResult.getFileChanges().size()==1,"File changes is not 1");
         Assert.isTrue(webhookResult.getFileChanges().get(0).equals("main.tf"),"File changes is not main.tf");
+        Assert.isTrue(webhookResult.getTargetBranch().equals("main"), "Target branch is not main");
 
         workspace.setDeleted(true);
         workspace.setVcs(null);

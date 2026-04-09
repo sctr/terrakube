@@ -126,6 +126,7 @@ public class WebhookServiceBase {
             TriFunction<String, WebhookResult, Map<String, String>, WebhookResult> handleEvent) {
         WebhookResult result = new WebhookResult();
         result.setBranch("");
+        result.setTargetBranch("");
         result.setVia(via);
         String workspaceId = new String(Base64.getMimeDecoder().decode(token.getBytes(StandardCharsets.UTF_8)));
         log.info("WorkspaceId: {}", workspaceId);

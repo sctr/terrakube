@@ -96,12 +96,17 @@ public class WebhookService {
                 String templateId = findTemplateIdRelease(webhookResult, webhook);
                 log.info("webhook event {} for workspace {}, using template with id {}", webhookResult.getNormalizedEvent(),
                         workspace.getName(), templateId);
-                createAndScheduleJob(templateId, webhookResult, workspace);
+                createAndScheduleJob(templateId, webhookResult, workspace, webhookResult.getBranch());
             } else {
                 WebhookEvent matchedEvent = findMatchingEvent(webhookResult, webhook);
                 log.info("webhook event {} for workspace {}, using template with id {}", webhookResult.getNormalizedEvent(),
                         workspace.getName(), matchedEvent.getTemplateId());
-                Job savedJob = createAndScheduleJob(matchedEvent.getTemplateId(), webhookResult, workspace);
+                String previewPlanBranch = resolvePullRequestBranch(webhookResult, webhook);
+                Job savedJob = createAndScheduleJob(
+                        matchedEvent.getTemplateId(),
+                        webhookResult,
+                        workspace,
+                        previewPlanBranch);
 
                 if (matchedEvent.isPrWorkflowEnabled() && webhookResult.getPrNumber() != null) {
                     savedJob.setPrNumber(webhookResult.getPrNumber().intValue());
@@ -121,10 +126,15 @@ public class WebhookService {
         log.info("PR comment command '{}' received for workspace {}", command, workspace.getName());
 
         WebhookEvent matchedEvent = findMatchingEvent(webhookResult, webhook);
+        String previewPlanBranch = resolvePullRequestBranch(webhookResult, webhook);
 
         if ("plan".equals(command)) {
             log.info("PR comment plan for workspace {}, using template {}", workspace.getName(), matchedEvent.getTemplateId());
-            Job savedJob = createAndScheduleJob(matchedEvent.getTemplateId(), webhookResult, workspace);
+            Job savedJob = createAndScheduleJob(
+                    matchedEvent.getTemplateId(),
+                    webhookResult,
+                    workspace,
+                    previewPlanBranch);
             savedJob.setPrNumber(webhookResult.getPrNumber() != null ? webhookResult.getPrNumber().intValue() : null);
             jobRepository.save(savedJob);
             sendCommitStatus(savedJob);
@@ -138,7 +148,7 @@ public class WebhookService {
             workspace.setLocked(true);
             workspace.setLockDescription("Locked by PR #" + webhookResult.getPrNumber() + " apply");
             workspaceRepository.save(workspace);
-            Job savedJob = createAndScheduleJob(templateId, webhookResult, workspace);
+            Job savedJob = createAndScheduleJob(templateId, webhookResult, workspace, webhookResult.getBranch());
             savedJob.setPrNumber(webhookResult.getPrNumber() != null ? webhookResult.getPrNumber().intValue() : null);
             savedJob.setAutoApply(true);
             jobRepository.save(savedJob);
@@ -146,13 +156,14 @@ public class WebhookService {
         }
     }
 
-    private Job createAndScheduleJob(String templateId, WebhookResult webhookResult, Workspace workspace) throws Exception {
+    private Job createAndScheduleJob(String templateId, WebhookResult webhookResult, Workspace workspace,
+            String overrideBranch) throws Exception {
         Job job = new Job();
         job.setTemplateReference(templateId);
         job.setRefresh(true);
         job.setPlanChanges(true);
         job.setRefreshOnly(false);
-        job.setOverrideBranch(webhookResult.isRelease() ? "refs/tags/" + webhookResult.getBranch() : webhookResult.getBranch());
+        job.setOverrideBranch(webhookResult.isRelease() ? "refs/tags/" + overrideBranch : overrideBranch);
         job.setOrganization(workspace.getOrganization());
         job.setWorkspace(workspace);
         job.setCreatedBy(webhookResult.getCreatedBy());
@@ -171,11 +182,12 @@ public class WebhookService {
         WebhookEventType eventType = result.isPrComment()
                 ? WebhookEventType.PULL_REQUEST
                 : WebhookEventType.valueOf(result.getNormalizedEvent().toUpperCase());
+        String branchToMatch = resolvePullRequestBranch(result, webhook);
 
         return webhookEventRepository
                 .findByWebhookAndEventOrderByPriorityAsc(webhook, eventType)
                 .stream()
-                .filter(webhookEvent -> checkBranch(result.getBranch(), webhookEvent)
+                .filter(webhookEvent -> checkBranch(branchToMatch, webhookEvent)
                         && checkFileChanges(result.getFileChanges(), webhookEvent))
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException(
@@ -261,6 +273,31 @@ public class WebhookService {
             }
         }
         return false;
+    }
+
+    private String resolvePullRequestBranch(WebhookResult result, Webhook webhook) {
+        if (!shouldUseTargetBranchForPullRequest(result, webhook)) {
+            return result.getBranch();
+        }
+
+        String targetBranch = result.getTargetBranch();
+        if (targetBranch == null || targetBranch.isBlank()) {
+            return result.getBranch();
+        }
+
+        return targetBranch;
+    }
+
+    private boolean shouldUseTargetBranchForPullRequest(WebhookResult result, Webhook webhook) {
+        if (!webhook.isPrPreviewTargetBranch()) {
+            return false;
+        }
+
+        if (result.isPrComment()) {
+            return true;
+        }
+
+        return WebhookEventType.PULL_REQUEST.name().toLowerCase().equals(result.getNormalizedEvent());
     }
 
     private boolean checkFileChanges(List<String> files, WebhookEvent webhookEvent) {

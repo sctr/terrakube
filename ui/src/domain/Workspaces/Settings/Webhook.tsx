@@ -54,6 +54,18 @@ const isRegexPathType = (pathType: WebhookEventPathType | undefined) => {
   return pathType === WebhookEventPathType.REGEX;
 };
 
+const normalizeWebhookEvent = (event?: string) => {
+  if (!event) {
+    return event;
+  }
+
+  return event.toLowerCase();
+};
+
+const isPullRequestEvent = (event?: string) => {
+  return normalizeWebhookEvent(event) === "pull_request";
+};
+
 type Props = {
   workspace: Workspace;
   manageWorkspace: boolean;
@@ -66,6 +78,7 @@ export const WorkspaceWebhook = ({ workspace, vcsProvider, orgTemplates, manageW
   const isMobile = !screens.md;
   const [waiting, setWaiting] = useState(true);
   const [webhookEnabled, setWebhookEnabled] = useState(false);
+  const [prPreviewTargetBranch, setPrPreviewTargetBranch] = useState(false);
   const [recordIndex, setRecordIndex] = useState(1);
   const organizationId = workspace.relationships.organization.data.id;
   const [webhookEvents, setWebhookEvents] = useState<any[]>([createEmptyWebhookEvent(1) as any]);
@@ -81,6 +94,7 @@ export const WorkspaceWebhook = ({ workspace, vcsProvider, orgTemplates, manageW
   const loadWebhook = () => {
     if (!webhookId) {
       setWebhookEnabled(false);
+      setPrPreviewTargetBranch(false);
       return;
     }
     setWebhookEnabled(true);
@@ -92,6 +106,7 @@ export const WorkspaceWebhook = ({ workspace, vcsProvider, orgTemplates, manageW
     ])
       .then(([webhookRes, eventsRes]) => {
         setRemoteHookId(webhookRes.data.data.attributes.remoteHookId);
+        setPrPreviewTargetBranch(webhookRes.data.data.attributes.prPreviewTargetBranch || false);
 
         let i = 1;
         const events = eventsRes.data.data
@@ -101,7 +116,7 @@ export const WorkspaceWebhook = ({ workspace, vcsProvider, orgTemplates, manageW
               key: i++,
               id: event.id,
               priority: event.attributes.priority,
-              event: event.attributes.event,
+              event: normalizeWebhookEvent(event.attributes.event),
               branch: event.attributes.branch,
               file: event.attributes.path,
               pathType: event.attributes.pathType || WebhookEventPathType.REGEX,
@@ -133,6 +148,9 @@ export const WorkspaceWebhook = ({ workspace, vcsProvider, orgTemplates, manageW
   };
   const handleWebhookClick = () => {
     setWebhookEnabled(!webhookEnabled);
+  };
+  const handlePrPreviewTargetBranchChange = (checked: boolean) => {
+    setPrPreviewTargetBranch(checked);
   };
   const onDelete = (record: any) => {
     const newWebhookEvents = webhookEvents.filter((item) => item.key !== record.key);
@@ -166,7 +184,10 @@ export const WorkspaceWebhook = ({ workspace, vcsProvider, orgTemplates, manageW
           }
         });
       message.success("Webhook disabled successfully");
-      setWebhookEvents([]);
+      setPrPreviewTargetBranch(false);
+      setRemoteHookId("");
+      setRecordIndex(1);
+      setWebhookEvents([createEmptyWebhookEvent(1) as any]);
       setWaiting(false);
       return;
     }
@@ -226,6 +247,9 @@ export const WorkspaceWebhook = ({ workspace, vcsProvider, orgTemplates, manageW
           data: {
             type: "webhook",
             id: newWebhookId,
+            attributes: {
+              prPreviewTargetBranch,
+            },
           },
           relationships: {
             events: {
@@ -312,7 +336,7 @@ export const WorkspaceWebhook = ({ workspace, vcsProvider, orgTemplates, manageW
       render: (_: string, record: any, index: number) => (
         <Select
           placeholder="Select an event"
-          value={record.event}
+          value={normalizeWebhookEvent(record.event)}
           status={record.eventStatus}
           style={{ width: "100%" }}
           onChange={(e) => handleEventChange(index, record.key, "event", e)}
@@ -333,7 +357,7 @@ export const WorkspaceWebhook = ({ workspace, vcsProvider, orgTemplates, manageW
       key: "prWorkflowEnabled",
       width: isMobile ? 110 : 120,
       render: (_: string, record: any, index: number) =>
-        record.event === "pull_request" ? (
+        isPullRequestEvent(record.event) ? (
           <Switch
             size="small"
             checked={record.prWorkflowEnabled || false}
@@ -467,6 +491,21 @@ export const WorkspaceWebhook = ({ workspace, vcsProvider, orgTemplates, manageW
             }}
           >
             <Switch onChange={handleWebhookClick} checked={webhookEnabled} disabled={!manageWorkspace} />
+          </Form.Item>
+          <Form.Item
+            label="For pull requests, create preview plans against the target branch instead of source?"
+            hidden={vcsProvider === undefined || !webhookEnabled}
+            tooltip={{
+              title:
+                "Matches pull request webhook rules against the target branch and uses that branch for preview plans. terrakube apply from PR comments still uses the source branch.",
+              icon: <InfoCircleOutlined />,
+            }}
+          >
+            <Switch
+              onChange={handlePrPreviewTargetBranchChange}
+              checked={prPreviewTargetBranch}
+              disabled={!manageWorkspace}
+            />
           </Form.Item>
           <Row hidden={!webhookEnabled}>
             <Col xs={24} md={12}>

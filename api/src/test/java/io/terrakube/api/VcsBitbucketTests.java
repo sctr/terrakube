@@ -347,6 +347,7 @@ public class VcsBitbucketTests extends ServerApplicationTests{
         webhookResult = bitBucketWebhookService.handleEvent(payload,webhookResult, headers);
 
         Assert.isTrue(webhookResult.getFileChanges().size()==1,"File changes is not 1");
+        Assert.isTrue(webhookResult.getTargetBranch().equals("main"), "Target branch is not main");
 
         workspace.setDeleted(true);
         workspace.setVcs(null);

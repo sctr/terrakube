@@ -2,7 +2,7 @@ import { Button, Empty, Flex } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import "antd/dist/reset.css";
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { ORGANIZATION_ARCHIVE, ORGANIZATION_NAME } from "../../config/actionTypes";
 import organizationService from "@/modules/organizations/organizationService";
 import { mapOrganization } from "./organizationMapper";
@@ -14,7 +14,9 @@ import PageWrapper from "@/modules/layout/PageWrapper/PageWrapper";
 export default function OrganizationsPickerPage() {
   const [organizations, setOrganizations] = useState<OrganizationModel[]>([]);
   const navigate = useNavigate();
+  const location = useLocation();
   const orgId = sessionStorage.getItem(ORGANIZATION_ARCHIVE);
+  const isOrganizationsPage = location.pathname === "/organizations" || location.pathname === "/organizations/";
 
   const { loading, execute, error } = useApiRequest({
     action: () => organizationService.listOrganizations(),
@@ -48,13 +50,13 @@ export default function OrganizationsPickerPage() {
   }, []);
 
   useEffect(() => {
-    if (organizations.length === 1) {
+    if (!isOrganizationsPage && organizations.length === 1) {
       const organization = organizations[0];
       sessionStorage.setItem(ORGANIZATION_ARCHIVE, organization.id);
       sessionStorage.setItem(ORGANIZATION_NAME, organization.name);
       window.location.href = `/organizations/${organization.id}/workspaces`;
     }
-  }, [organizations]);
+  }, [isOrganizationsPage, organizations]);
 
   return (
     <PageWrapper
